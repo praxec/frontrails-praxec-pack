@@ -103,3 +103,23 @@ proxy:
     - { capability: intentos.propose, tags: [primary], aliases: [propose, change] }
     - { capability: intentos.navigate, aliases: [navigate, position] }
     - { capability: intentos.finish, aliases: [finish, close] }
+
+workflows:
+  frontrails_spec:
+    description: >
+      Drive IntentOS to a goal by following its own HATEOAS hints. The running
+      LLM picks each transition; FrontRails' gates stay authoritative. No journey
+      logic is re-encoded here — every transition IS an exposed capability.
+    initialState: working
+    maxChainDepth: 50
+    states:
+      working:
+        goal: Follow IntentOS _required/_available hints until the spec is healthy.
+        transitions:
+          status:   { target: working, actor: agent, executor: { capability: intentos.status } }
+          search:   { target: working, actor: agent, executor: { capability: intentos.search_intent_harness } }
+          propose:  { target: working, actor: agent, executor: { capability: intentos.propose } }
+          navigate: { target: working, actor: agent, executor: { capability: intentos.navigate } }
+          finish:   { target: done, actor: agent, executor: { capability: intentos.finish } }
+      done:
+        terminal: true
