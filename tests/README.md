@@ -50,7 +50,8 @@ model key — it is not part of `mcp-flowgate check` (which is structure-only).
 2. **Zero-FrontRails-diff poka-yoke:** FrontRails source is untouched:
 
    ```bash
-   git -C /home/mc/working/frontrails-product diff --stat crates/
+   # Set FRONTRAILS_PRODUCT_DIR to your frontrails-product checkout root.
+   git -C "${FRONTRAILS_PRODUCT_DIR:?set FRONTRAILS_PRODUCT_DIR}" diff --stat crates/
    ```
 
    This MUST be EMPTY. The whole point of the pack is that FrontRails is

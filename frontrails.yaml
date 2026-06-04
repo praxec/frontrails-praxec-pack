@@ -120,7 +120,7 @@ capabilities:
   structureos.scan_repo:
     title: "StructureOS — scan repo, populate analysis cache"
     description: "Populate the scan cache so metrics/treeview/diagnostics work."
-    tags: [structureos, read]
+    tags: [structureos, write]
     inputSchema:
       type: object
       properties:

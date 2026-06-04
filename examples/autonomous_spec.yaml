@@ -10,6 +10,11 @@ include:
   - ../frontrails.yaml
 
 workflows:
+  # NOTE: The prompt below restricts the driver to intentos.* capabilities,
+  # but ALL merged capabilities (structureos.*, securityos.*) remain callable
+  # at the Flowgate layer — the prompt is not an enforcement boundary. To HARD-
+  # restrict the driver, merge a filtered include that omits non-intentos
+  # exposures, or exclude those capabilities from the proxy.expose list.
   drive_intentos:
     description: "Autonomously resolve IntentOS diagnostics for a goal."
     inputSchema:

@@ -1,6 +1,6 @@
 # frontrails-flowgate-pack
 
-A [Flowgate](https://github.com/) **pattern pack** that exposes the FrontRails
+A Flowgate **pattern pack** that exposes the FrontRails
 MCP servers — **IntentOS**, **StructureOS**, and **SecurityOS** — as Flowgate
 capabilities.
 
@@ -50,8 +50,7 @@ merged config with `INCLUDE_HASH_MISMATCH` if the fetched bytes don't match.
 Compute the hash:
 
 ```bash
-sha256sum frontrails.yaml
-# prefix the hex digest with "sha256:" in the include entry
+sha256sum frontrails.yaml | awk '{print "sha256:" $1}'
 ```
 
 ### Vendored file-path fallback
@@ -81,8 +80,9 @@ cleanly on top.
 ## Validate
 
 ```bash
-FLOWGATE=/path/to/mcp-flowgate ./scripts/check.sh        # exit 0 = valid
-FLOWGATE=/path/to/mcp-flowgate "$FLOWGATE" check --config examples/autonomous_spec.yaml
+export FLOWGATE=/path/to/mcp-flowgate          # the built binary
+./scripts/check.sh                              # validates frontrails.yaml (exit 0 = valid)
+"$FLOWGATE" check --config examples/autonomous_spec.yaml
 ```
 
 `check` validates **structure only** — it does not spawn the MCP servers, so
