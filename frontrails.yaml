@@ -16,6 +16,23 @@ connections:
       INTENTOS_SPEC_ROOT: "."
       INTENTOS_WORKSPACE_ROOT: "."
 
+  # StructureOS MCP server. `structureos-mcp` serves over stdio with no
+  # subcommand (verified: `structureos-mcp --help` shows `Usage: structureos-mcp`).
+  structureos:
+    kind: mcp
+    command: "structureos-mcp"
+    env:
+      STRUCTUREOS_WORKSPACE_ROOT: "."
+
+  # SecurityOS MCP server. OPEN ITEM: binary name `securityos` and the
+  # `mcp serve` subcommand are UNCONFIRMED (not on PATH at authoring time).
+  securityos:
+    kind: mcp
+    command: "securityos"
+    args: ["mcp", "serve"]
+    env:
+      SECURITYOS_WORKSPACE_ROOT: "."
+
 capabilities:
   intentos.status:
     title: "IntentOS — spec status, diagnostics, next steps"
@@ -96,6 +113,78 @@ capabilities:
         action: "finish"
         params: "$.arguments.params"
 
+  # --- StructureOS (code structure) ---
+  # OPEN ITEM: action names below are best-effort from the StructureOS
+  # workflow docs (scan_repo / get_diagnostics / move). Verify against the
+  # live server's action discriminator before relying on them.
+  structureos.scan_repo:
+    title: "StructureOS — scan repo, populate analysis cache"
+    description: "Populate the scan cache so metrics/treeview/diagnostics work."
+    tags: [structureos, read]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: structureos
+      tool: "structureos"
+      arguments:
+        action: "scan_repo"
+        params: "$.arguments.params"
+
+  structureos.get_diagnostics:
+    title: "StructureOS — structural diagnostics"
+    description: "View structural issues (god files, cycles) after a scan."
+    tags: [structureos, read]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: structureos
+      tool: "structureos"
+      arguments:
+        action: "get_diagnostics"
+        params: "$.arguments.params"
+
+  structureos.move:
+    title: "StructureOS — move entities with auto-wiring"
+    description: "Move functions/types between files; rewires imports + re-exports."
+    tags: [structureos, write]
+    inputSchema:
+      type: object
+      required: [params]
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: structureos
+      tool: "structureos"
+      arguments:
+        action: "move"
+        params: "$.arguments.params"
+
+  # --- SecurityOS ---
+  # OPEN ITEM: action name `scan` is best-effort and the server itself is
+  # unconfirmed (see the securityos connection note).
+  securityos.scan:
+    title: "SecurityOS — security scan"
+    description: "Run a security scan over the workspace."
+    tags: [securityos, read]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: securityos
+      tool: "securityos"
+      arguments:
+        action: "scan"
+        params: "$.arguments.params"
+
 proxy:
   expose:
     - { capability: intentos.status, tags: [primary], aliases: [status, health] }
@@ -103,6 +192,10 @@ proxy:
     - { capability: intentos.propose, tags: [primary], aliases: [propose, change] }
     - { capability: intentos.navigate, aliases: [navigate, position] }
     - { capability: intentos.finish, aliases: [finish, close] }
+    - { capability: structureos.scan_repo, tags: [primary], aliases: [scan, scan_repo] }
+    - { capability: structureos.get_diagnostics, aliases: [diagnostics, structure_diagnostics] }
+    - { capability: structureos.move, tags: [primary], aliases: [move, refactor] }
+    - { capability: securityos.scan, tags: [primary], aliases: [security_scan] }
 
 workflows:
   frontrails_spec:
