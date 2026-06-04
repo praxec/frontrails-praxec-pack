@@ -1,0 +1,57 @@
+# examples/autonomous_spec.yaml — optional autonomous driver.
+#
+# Merges the FrontRails pack and adds a single-state workflow whose one
+# transition runs the in-runtime `kind: llm` executor. The model is told to
+# use ONLY the exposed intentos.* capabilities and to follow IntentOS' own
+# HATEOAS hints until the spec is healthy, then call intentos.finish.
+#
+# FrontRails is never modified — this file lives entirely in the pack repo.
+include:
+  - ../frontrails.yaml
+
+workflows:
+  drive_intentos:
+    description: "Autonomously resolve IntentOS diagnostics for a goal."
+    inputSchema:
+      type: object
+      required: [goal]
+      properties:
+        goal: { type: string }
+      additionalProperties: false
+    blackboard:
+      goal: { type: string }
+      # NOTE: the kind:llm executor's synthetic `_llm.*` cap counters are wired
+      # via the transition's `output:` block below, NOT declared here — the
+      # `_llm.` prefix is a runtime-reserved namespace (SPEC §33 D6). `check`
+      # emits 3 benign "not declared in the blackboard" warnings for them.
+    initialState: drive
+    states:
+      drive:
+        goal: Drive IntentOS to a healthy spec for the caller's goal.
+        transitions:
+          run:
+            title: Drive the IntentOS spec workflow autonomously
+            target: done
+            actor: agent
+            executor:
+              kind: llm
+              model: "anthropic:claude-sonnet-4-6"
+              prompt_template: |
+                You are driving the IntentOS spec workflow to this goal:
+                {{ blackboard.goal }}
+
+                Use ONLY the exposed intentos.* capabilities. After each call,
+                read its _required/_available hints and _spec_health, then choose
+                the next capability. Open a plan first if status requires it.
+                Continue until _spec_health.errors == 0, then call intentos.finish.
+              max_iterations: 25
+              max_seconds: 600
+              max_tokens: 4000
+            # Persist the executor's synthetic cap counters so max_tokens /
+            # max_seconds / max_iterations actually bind on later turns.
+            output:
+              "_llm.cumulative_tokens": "$.output._llm.cumulative_tokens"
+              "_llm.session.drive.started_at": "$.output._llm.session.drive.started_at"
+              "_llm.consecutive_no_tool_call": "$.output._llm.consecutive_no_tool_call"
+      done:
+        terminal: true
