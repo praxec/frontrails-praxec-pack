@@ -1,4 +1,97 @@
 # frontrails.yaml — FrontRails capabilities as a Flowgate pattern pack.
 # Consumers merge this via `include:`. FrontRails itself is never modified.
+#
+# Each FrontRails MCP server exposes ONE tool (intentos / structureos /
+# securityos) that takes an `action` discriminator + `params`. So each ACTION
+# becomes its own Flowgate capability: it calls the one tool with a fixed
+# `action` and templates the caller's `params` in via `$.arguments.params`.
 version: "1.0.0"
-connections: {}
+
+connections:
+  intentos:
+    kind: mcp
+    command: "intent"
+    args: ["mcp", "serve"]
+    env:
+      INTENTOS_SPEC_ROOT: "."
+      INTENTOS_WORKSPACE_ROOT: "."
+
+capabilities:
+  intentos.status:
+    title: "IntentOS — spec status, diagnostics, next steps"
+    description: "Read spec health, diagnostics, gate progression, drift."
+    tags: [intentos, read]
+    inputSchema:
+      type: object
+      properties: {}
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "status"
+
+  intentos.search_intent_harness:
+    title: "IntentOS — search existing intent entities (grounding)"
+    description: "Search the intent harness for existing entities to ground proposals in."
+    tags: [intentos, read]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "search_intent_harness"
+        params: "$.arguments.params"
+
+  intentos.propose:
+    title: "IntentOS — propose grounded spec changes"
+    description: "Add/modify/delete/link spec entities; requires grounded_in."
+    tags: [intentos, write]
+    inputSchema:
+      type: object
+      required: [params]
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "propose"
+        params: "$.arguments.params"
+
+  intentos.navigate:
+    title: "IntentOS — position in the intent topology"
+    description: "Position the cursor in the intent graph before authoring."
+    tags: [intentos, read]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "navigate"
+        params: "$.arguments.params"
+
+  intentos.finish:
+    title: "IntentOS — capture impact + feedback, surface remaining work"
+    description: "Close the session, capture impact, and surface remaining work."
+    tags: [intentos, write]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "finish"
+        params: "$.arguments.params"
