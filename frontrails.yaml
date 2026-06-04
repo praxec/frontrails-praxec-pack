@@ -95,3 +95,11 @@ capabilities:
       arguments:
         action: "finish"
         params: "$.arguments.params"
+
+proxy:
+  expose:
+    - { capability: intentos.status, tags: [primary], aliases: [status, health] }
+    - { capability: intentos.search_intent_harness, aliases: [search, ground] }
+    - { capability: intentos.propose, tags: [primary], aliases: [propose, change] }
+    - { capability: intentos.navigate, aliases: [navigate, position] }
+    - { capability: intentos.finish, aliases: [finish, close] }
