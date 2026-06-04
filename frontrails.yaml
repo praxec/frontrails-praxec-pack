@@ -1,0 +1,4 @@
+# frontrails.yaml — FrontRails capabilities as a Flowgate pattern pack.
+# Consumers merge this via `include:`. FrontRails itself is never modified.
+version: "1.0.0"
+connections: {}
