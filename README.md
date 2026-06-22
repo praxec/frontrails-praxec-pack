@@ -21,7 +21,8 @@ becomes its own Flowgate capability: it calls the one tool with a fixed
 - **Individual capabilities** (one per action), each exposed via `proxy.expose`
   with tags + aliases for discovery:
   - IntentOS: `intentos.status`, `intentos.search_intent_harness`,
-    `intentos.propose`, `intentos.navigate`, `intentos.finish`
+    `intentos.propose`, `intentos.navigate`, `intentos.worklist`,
+    `intentos.certify`, `intentos.finish`
   - StructureOS: `structureos.scan_repo`, `structureos.get_diagnostics`,
     `structureos.move`
   - SecurityOS: `securityos.scan`
@@ -29,8 +30,21 @@ becomes its own Flowgate capability: it calls the one tool with a fixed
   transitions *are* the exposed IntentOS capabilities; the running LLM picks
   each one and follows IntentOS' own HATEOAS hints. No journey logic is
   re-encoded — FrontRails' gates remain the source of truth.
+- **`frontrails_burndown`** — the worklist **burn-down loop**. After one user
+  kickoff, the running LLM repeatedly reads the prioritized frontier
+  (`intentos.worklist`), resolves the top-ranked item via its `suggested_action`
+  (usually `intentos.propose`), and re-reads — stopping when the worklist is empty
+  or `intentos.certify` reports `passed: true`. The worklist's ranking and
+  IntentOS' write-protection/gates stay authoritative (attested intent is diverted
+  to candidates, never overwritten); Flowgate provides the loop + audit + the
+  `maxChainDepth` runaway cap. This is the autonomous self-correction loop on top
+  of the M4 worklist + M6 certify gate.
 - **`examples/autonomous_spec.yaml`** — an optional `kind: llm` driver that
   autonomously resolves IntentOS diagnostics toward a caller-supplied goal.
+
+Soundness of all three workflows is checked with `mcp-flowgate fuzz`
+(mock-executor scenarios for wedges/livelocks/engine errors) — see
+`scripts/check.sh` and the acceptance notes.
 
 ## Consuming the pack
 

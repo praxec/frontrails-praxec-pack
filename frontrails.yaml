@@ -113,6 +113,46 @@ capabilities:
         action: "finish"
         params: "$.arguments.params"
 
+  intentos.worklist:
+    title: "IntentOS — prioritized intent worklist (the frontier)"
+    description: >
+      The ranked to-do list combining conflicts, coverage gaps and diagnostics —
+      each item carries a suggested_action ({mcp_action, params}), a target_entity_id,
+      gate_eligible, and owning_role. The burn-down loop reads this each iteration to
+      pick the highest-ranked item to resolve.
+    tags: [intentos, read]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "worklist"
+        params: "$.arguments.params"
+
+  intentos.certify:
+    title: "IntentOS — certify (apex gate: attested + no conflicts)"
+    description: >
+      The apex check. passed == true iff every in-scope entity is attested + intact
+      AND there are no gate-eligible conflicts. Optional params.target_id scopes to a
+      vertical (climb_column). The burn-down loop uses certify as a done-condition;
+      coding/authoring stays advisory (certify never mutates).
+    tags: [intentos, read]
+    inputSchema:
+      type: object
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "certify"
+        params: "$.arguments.params"
+
   # --- StructureOS (code structure) ---
   # OPEN ITEM: action names below are best-effort from the StructureOS
   # workflow docs (scan_repo / get_diagnostics / move). Verify against the
@@ -191,6 +231,8 @@ proxy:
     - { capability: intentos.search_intent_harness, aliases: [search, ground] }
     - { capability: intentos.propose, tags: [primary], aliases: [propose, change] }
     - { capability: intentos.navigate, aliases: [navigate, position] }
+    - { capability: intentos.worklist, tags: [primary], aliases: [worklist, frontier, todo] }
+    - { capability: intentos.certify, tags: [primary], aliases: [certify, gate] }
     - { capability: intentos.finish, aliases: [finish, close] }
     - { capability: structureos.scan_repo, tags: [primary], aliases: [scan, scan_repo] }
     - { capability: structureos.get_diagnostics, aliases: [diagnostics, structure_diagnostics] }
@@ -213,6 +255,37 @@ workflows:
           search:   { target: working, actor: agent, executor: { capability: intentos.search_intent_harness } }
           propose:  { target: working, actor: agent, executor: { capability: intentos.propose } }
           navigate: { target: working, actor: agent, executor: { capability: intentos.navigate } }
+          finish:   { target: done, actor: agent, executor: { capability: intentos.finish } }
+      done:
+        terminal: true
+
+  frontrails_burndown:
+    description: >
+      Burn down the IntentOS worklist after one user kickoff. Each iteration: read the
+      prioritized frontier (worklist), resolve the highest-ranked item by calling its
+      suggested action (typically propose, grounded in the item's target), then re-read.
+      Stop when the worklist is empty or `certify` reports passed=true. The running LLM
+      drives; IntentOS gates + the worklist ranking stay authoritative — no ordering or
+      gate logic is re-encoded here (every transition IS an exposed capability).
+      maxChainDepth caps runaway / token burn.
+    initialState: burndown
+    maxChainDepth: 60
+    states:
+      burndown:
+        goal: >
+          Call `worklist` to get the ranked frontier. If it is empty — or `certify`
+          reports passed=true — call `finish` to close out. Otherwise take the
+          top-ranked item, ground it via `search`/`navigate` if needed, and resolve it
+          by calling its suggested_action (usually `propose`, using the item's params).
+          Then loop: call `worklist` again to re-rank. Never force a change onto attested
+          intent — write-protection diverts such proposals to candidates; surface the
+          captured candidate rather than retrying. Prefer gate_eligible items first.
+        transitions:
+          worklist: { target: burndown, actor: agent, executor: { capability: intentos.worklist } }
+          certify:  { target: burndown, actor: agent, executor: { capability: intentos.certify } }
+          search:   { target: burndown, actor: agent, executor: { capability: intentos.search_intent_harness } }
+          navigate: { target: burndown, actor: agent, executor: { capability: intentos.navigate } }
+          propose:  { target: burndown, actor: agent, executor: { capability: intentos.propose } }
           finish:   { target: done, actor: agent, executor: { capability: intentos.finish } }
       done:
         terminal: true
