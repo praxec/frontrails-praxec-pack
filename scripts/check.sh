@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-FLOWGATE="${FLOWGATE:-mcp-flowgate}"
+FLOWGATE="${FLOWGATE:-mcp-praxec}"
 CONFIG="$(dirname "$0")/../frontrails.yaml"
 # 1. Validate config (parse + resolve workflow/capability refs).
 "$FLOWGATE" check --config "$CONFIG"

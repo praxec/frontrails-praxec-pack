@@ -1,12 +1,12 @@
-# frontrails-flowgate-pack
+# frontrails-praxec-pack
 
-A Flowgate **pattern pack** that exposes the FrontRails
-MCP servers — **IntentOS**, **StructureOS**, and **SecurityOS** — as Flowgate
+A Praxec **pattern pack** that exposes the FrontRails
+MCP servers — **IntentOS**, **StructureOS**, and **SecurityOS** — as Praxec
 capabilities.
 
-The pack is pure Flowgate **configuration**. FrontRails itself is **never
-modified**: its MCP servers are spawned as Flowgate `connections`, and each of
-their `action`s is surfaced as an individually exposed capability. Flowgate
+The pack is pure Praxec **configuration**. FrontRails itself is **never
+modified**: its MCP servers are spawned as Praxec `connections`, and each of
+their `action`s is surfaced as an individually exposed capability. Praxec
 *reads* FrontRails' facts (`_spec_health`, `_required`, `_available`) and
 follows them — it never *re-decides* FrontRails' gates. **FrontRails' gates
 stay authoritative.**
@@ -15,7 +15,7 @@ stay authoritative.**
 
 Each FrontRails server exposes ONE MCP tool (`intentos` / `structureos` /
 `securityos`) that takes an `action` discriminator + `params`. So each action
-becomes its own Flowgate capability: it calls the one tool with a fixed
+becomes its own Praxec capability: it calls the one tool with a fixed
 `action` and templates the caller's `params` in via `$.arguments.params`.
 
 - **Individual capabilities** (one per action), each exposed via `proxy.expose`
@@ -36,13 +36,13 @@ becomes its own Flowgate capability: it calls the one tool with a fixed
   (usually `intentos.propose`), and re-reads — stopping when the worklist is empty
   or `intentos.certify` reports `passed: true`. The worklist's ranking and
   IntentOS' write-protection/gates stay authoritative (attested intent is diverted
-  to candidates, never overwritten); Flowgate provides the loop + audit + the
+  to candidates, never overwritten); Praxec provides the loop + audit + the
   `maxChainDepth` runaway cap. This is the autonomous self-correction loop on top
   of the M4 worklist + M6 certify gate.
 - **`examples/autonomous_spec.yaml`** — an optional `kind: llm` driver that
   autonomously resolves IntentOS diagnostics toward a caller-supplied goal.
 
-Soundness of all three workflows is checked with `mcp-flowgate fuzz`
+Soundness of all three workflows is checked with `mcp-praxec fuzz`
 (mock-executor scenarios for wedges/livelocks/engine errors) — see
 `scripts/check.sh` and the acceptance notes.
 
@@ -54,11 +54,11 @@ Pin a specific commit SHA (or signed tag) **and** the content hash:
 
 ```yaml
 include:
-  - uri: "https://raw.githubusercontent.com/<org>/frontrails-flowgate-pack/<sha>/frontrails.yaml"
+  - uri: "https://raw.githubusercontent.com/<org>/frontrails-praxec-pack/<sha>/frontrails.yaml"
     hash: "sha256:<64-hex>"
 ```
 
-Non-`file://` includes **require** the `sha256:` hash — Flowgate rejects the
+Non-`file://` includes **require** the `sha256:` hash — Praxec rejects the
 merged config with `INCLUDE_HASH_MISMATCH` if the fetched bytes don't match.
 
 Compute the hash:
@@ -73,7 +73,7 @@ Vendor `frontrails.yaml` into your own repo and include it by relative path:
 
 ```yaml
 include:
-  - vendor/frontrails-flowgate-pack/frontrails.yaml   # hash optional for file:// paths
+  - vendor/frontrails-praxec-pack/frontrails.yaml   # hash optional for file:// paths
 ```
 
 Includes deep-merge (maps merge, arrays concatenate, scalars: later wins), so
@@ -85,7 +85,7 @@ cleanly on top.
 - **Pin a SHA or signed tag + the `sha256:` hash.** Floating refs (`main`)
   defeat the hash guard and let upstream changes land silently.
 - The pack's surface is the set of FrontRails **actions**. An exposure that
-  names a removed action **fails fast at `mcp-flowgate check`** (capability
+  names a removed action **fails fast at `mcp-praxec check`** (capability
   reference resolution) — so a breaking FrontRails change surfaces as a config
   validation error in *your* CI, not a runtime surprise.
 - Bump and re-pin when FrontRails action names change. Re-run `sha256sum` and
@@ -94,7 +94,7 @@ cleanly on top.
 ## Validate
 
 ```bash
-export FLOWGATE=/path/to/mcp-flowgate          # the built binary
+export FLOWGATE=/path/to/mcp-praxec          # the built binary
 ./scripts/check.sh                              # validates frontrails.yaml (exit 0 = valid)
 "$FLOWGATE" check --config examples/autonomous_spec.yaml
 ```

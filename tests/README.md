@@ -2,7 +2,7 @@
 
 This E2E proves the pack drives FrontRails end-to-end **without modifying
 FrontRails**. It is manual / CI-gated because it needs live binaries and a
-model key — it is not part of `mcp-flowgate check` (which is structure-only).
+model key — it is not part of `mcp-praxec check` (which is structure-only).
 
 ## Requirements
 
@@ -11,7 +11,7 @@ model key — it is not part of `mcp-flowgate check` (which is structure-only).
   the intentos-only drive).
 - A model API key for the `kind: llm` executor in
   `examples/autonomous_spec.yaml` (e.g. `ANTHROPIC_API_KEY`), and the
-  `mcp-flowgate serve` runtime.
+  `mcp-praxec serve` runtime.
 - The fixture `tests/fixtures/spec-with-diagnostic/` populated with a real
   spec that yields exactly one diagnostic (see that directory's README — TODO).
 
@@ -20,7 +20,7 @@ model key — it is not part of `mcp-flowgate check` (which is structure-only).
 1. Validate the config (must pass before anything else):
 
    ```bash
-   FLOWGATE=/path/to/mcp-flowgate
+   FLOWGATE=/path/to/mcp-praxec
    "$FLOWGATE" check --config examples/autonomous_spec.yaml   # exit 0
    ```
 
@@ -55,7 +55,7 @@ model key — it is not part of `mcp-flowgate check` (which is structure-only).
    ```
 
    This MUST be EMPTY. The whole point of the pack is that FrontRails is
-   *leveraged* (its MCP servers are spawned as Flowgate connections), never
+   *leveraged* (its MCP servers are spawned as Praxec connections), never
    *modified*. Any diff under `crates/` fails the E2E.
 
 > The pack reads FrontRails facts (`_spec_health`, `_required`, `_available`)
