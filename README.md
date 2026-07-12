@@ -21,8 +21,8 @@ becomes its own Praxec capability: it calls the one tool with a fixed
 - **Individual capabilities** (one per action), each exposed via `proxy.expose`
   with tags + aliases for discovery:
   - IntentOS: `intentos.status`, `intentos.search_intent_harness`,
-    `intentos.propose`, `intentos.navigate`, `intentos.worklist`,
-    `intentos.certify`, `intentos.finish`
+    `intentos.propose`, `intentos.propose_status`, `intentos.navigate`,
+    `intentos.worklist`, `intentos.certify`, `intentos.finish`
   - StructureOS: `structureos.scan_repo`, `structureos.get_diagnostics`,
     `structureos.move`
   - SecurityOS: `securityos.scan`
@@ -45,6 +45,21 @@ becomes its own Praxec capability: it calls the one tool with a fixed
 Soundness of all three workflows is checked with `mcp-praxec fuzz`
 (mock-executor scenarios for wedges/livelocks/engine errors) — see
 `scripts/check.sh` and the acceptance notes.
+
+### Async-HITL (FrontRails 0.0.17)
+
+Mutating IntentOS actions are human-gated. When a mutation can't reach a human —
+as in this headless/agent context — `intentos.propose` (and the
+`review_strategy` / `request_full_review` review actions) no longer wedge or
+fail closed: they **park the change as a durable approval ticket** and return
+`status: "pending_approval"` + a `ticket_id`. The change is not applied until a
+human approves it through IntentOS' own dialog channel — an agent structurally
+cannot self-approve, so that gate stays authoritative here. Poll the ticket with
+`intentos.propose_status { ticket_id }` (read-only: `pending` → `applied` /
+`rejected` / `failed` / `expired`). The `frontrails_burndown` loop treats a
+parked ticket as "handed off, keep going" — it records the id and burns down
+other worklist items rather than blocking; `certify` will not report
+`passed: true` until the parked change is approved and applied.
 
 ## Consuming the pack
 

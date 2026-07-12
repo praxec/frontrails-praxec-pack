@@ -5,7 +5,18 @@
 # securityos) that takes an `action` discriminator + `params`. So each ACTION
 # becomes its own Flowgate capability: it calls the one tool with a fixed
 # `action` and templates the caller's `params` in via `$.arguments.params`.
-version: "1.0.0"
+#
+# ASYNC-HITL (FrontRails 0.0.17): mutating IntentOS actions are human-gated.
+# When a mutation cannot reach a human — as in this headless/agent context —
+# `propose`, `review_strategy` and `request_full_review` no longer wedge or
+# fail closed: they PARK the change as a durable approval ticket and return
+# `status: "pending_approval"` + a `ticket_id`. The change is NOT applied until
+# a human approves it through IntentOS's own dialog channel (an agent
+# structurally cannot self-approve — that gate stays authoritative here). Poll
+# the ticket with `intentos.propose_status { ticket_id }`; a burn-down loop
+# should surface the ticket_id and move on to other worklist items rather than
+# block. See the `intentos.propose_status` capability and the workflow goals.
+version: "1.1.0"
 
 connections:
   intentos:
@@ -153,6 +164,33 @@ capabilities:
         action: "certify"
         params: "$.arguments.params"
 
+  intentos.propose_status:
+    title: "IntentOS — poll an async approval ticket (park → apply status)"
+    description: >
+      Read-only poll of a durable approval ticket. When a mutating action cannot
+      reach a human it PARKS the change and returns status=pending_approval + a
+      ticket_id instead of applying synchronously (see the ASYNC-HITL note at the
+      top of this pack). Call propose_status with that ticket_id to read the
+      outcome: pending (awaiting human approval), applied (carries the full result
+      payload), rejected, failed, or expired. With no ticket_id it lists all
+      pending tickets. This handler has NO write path — it can never approve or
+      transition a ticket (approval flows only through the human-only dialog).
+    tags: [intentos, read]
+    inputSchema:
+      type: object
+      properties:
+        params:
+          type: object
+          properties:
+            ticket_id: { type: string }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      arguments:
+        action: "propose_status"
+        params: "$.arguments.params"
+
   # --- StructureOS (code structure) ---
   # OPEN ITEM: action names below are best-effort from the StructureOS
   # workflow docs (scan_repo / get_diagnostics / move). Verify against the
@@ -230,6 +268,7 @@ proxy:
     - { capability: intentos.status, tags: [primary], aliases: [status, health] }
     - { capability: intentos.search_intent_harness, aliases: [search, ground] }
     - { capability: intentos.propose, tags: [primary], aliases: [propose, change] }
+    - { capability: intentos.propose_status, aliases: [propose_status, ticket, poll] }
     - { capability: intentos.navigate, aliases: [navigate, position] }
     - { capability: intentos.worklist, tags: [primary], aliases: [worklist, frontier, todo] }
     - { capability: intentos.certify, tags: [primary], aliases: [certify, gate] }
@@ -249,13 +288,19 @@ workflows:
     maxChainDepth: 50
     states:
       working:
-        goal: Follow IntentOS _required/_available hints until the spec is healthy.
+        goal: >
+          Follow IntentOS _required/_available hints until the spec is healthy. If a
+          propose returns status=pending_approval it parked an approval ticket (no human
+          reachable here) — record the ticket_id, poll it with propose_status, and move
+          on; a human approves it through IntentOS's own dialog. Do not treat a parked
+          ticket as failure.
         transitions:
-          status:   { target: working, actor: agent, executor: { capability: intentos.status } }
-          search:   { target: working, actor: agent, executor: { capability: intentos.search_intent_harness } }
-          propose:  { target: working, actor: agent, executor: { capability: intentos.propose } }
-          navigate: { target: working, actor: agent, executor: { capability: intentos.navigate } }
-          finish:   { target: done, actor: agent, executor: { capability: intentos.finish } }
+          status:         { target: working, actor: agent, executor: { capability: intentos.status } }
+          search:         { target: working, actor: agent, executor: { capability: intentos.search_intent_harness } }
+          propose:        { target: working, actor: agent, executor: { capability: intentos.propose } }
+          propose_status: { target: working, actor: agent, executor: { capability: intentos.propose_status } }
+          navigate:       { target: working, actor: agent, executor: { capability: intentos.navigate } }
+          finish:         { target: done, actor: agent, executor: { capability: intentos.finish } }
       done:
         terminal: true
 
@@ -280,12 +325,18 @@ workflows:
           Then loop: call `worklist` again to re-rank. Never force a change onto attested
           intent — write-protection diverts such proposals to candidates; surface the
           captured candidate rather than retrying. Prefer gate_eligible items first.
+          If a propose returns status=pending_approval it parked an approval ticket (no
+          human reachable in this loop): record the ticket_id, optionally poll it with
+          propose_status, and continue burning down OTHER worklist items — do not block
+          on or retry the parked change. A human applies it later through IntentOS's
+          dialog; certify will not report passed=true until it is approved and applied.
         transitions:
-          worklist: { target: burndown, actor: agent, executor: { capability: intentos.worklist } }
-          certify:  { target: burndown, actor: agent, executor: { capability: intentos.certify } }
-          search:   { target: burndown, actor: agent, executor: { capability: intentos.search_intent_harness } }
-          navigate: { target: burndown, actor: agent, executor: { capability: intentos.navigate } }
-          propose:  { target: burndown, actor: agent, executor: { capability: intentos.propose } }
-          finish:   { target: done, actor: agent, executor: { capability: intentos.finish } }
+          worklist:       { target: burndown, actor: agent, executor: { capability: intentos.worklist } }
+          certify:        { target: burndown, actor: agent, executor: { capability: intentos.certify } }
+          search:         { target: burndown, actor: agent, executor: { capability: intentos.search_intent_harness } }
+          navigate:       { target: burndown, actor: agent, executor: { capability: intentos.navigate } }
+          propose:        { target: burndown, actor: agent, executor: { capability: intentos.propose } }
+          propose_status: { target: burndown, actor: agent, executor: { capability: intentos.propose_status } }
+          finish:         { target: done, actor: agent, executor: { capability: intentos.finish } }
       done:
         terminal: true
