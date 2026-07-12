@@ -1,8 +1,8 @@
 # frontrails-praxec-pack
 
 A Praxec **pattern pack** that exposes the FrontRails
-MCP servers — **IntentOS**, **StructureOS**, and **SecurityOS** — as Praxec
-capabilities.
+MCP servers — **IntentOS**, **StructureOS**, **SecurityOS**, and **uxos** — as
+Praxec capabilities.
 
 The pack is pure Praxec **configuration**. FrontRails itself is **never
 modified**: its MCP servers are spawned as Praxec `connections`, and each of
@@ -13,10 +13,11 @@ stay authoritative.**
 
 ## What's in the box
 
-Each FrontRails server exposes ONE MCP tool (`intentos` / `structureos` /
-`securityos`) that takes an `action` discriminator + `params`. So each action
-becomes its own Praxec capability: it calls the one tool with a fixed
-`action` and templates the caller's `params` in via `$.arguments.params`.
+The three `*os` servers each expose ONE MCP tool (`intentos` / `structureos` /
+`securityos`) that takes an `action` discriminator + `params`, so each action
+becomes its own Praxec capability (fixed `action` + templated `$.arguments.params`).
+uxos (`ux-ir-mcp`) is the exception: it exposes one tool per verb, so each uxos
+capability names its tool directly and templates the inline `ir` document.
 
 - **Individual capabilities** (one per action), each exposed via `proxy.expose`
   with tags + aliases for discovery:
@@ -26,6 +27,20 @@ becomes its own Praxec capability: it calls the one tool with a fixed
   - StructureOS: `structureos.scan_repo`, `structureos.get_diagnostics`,
     `structureos.move`
   - SecurityOS: `securityos.scan`
+  - uxos: `uxos.extract`, `uxos.conform`, `uxos.scan_dark_patterns`,
+    `uxos.audit`, `uxos.check_coverage`, `uxos.compare`. Unlike the `*os`
+    servers, `ux-ir-mcp` exposes one tool PER VERB (no `action` discriminator),
+    so each capability names its tool directly and templates the inline `ir`
+    document (or raw `html` / `a11y_tree` for extract). Every uxos verb is
+    **read-only** — it evaluates a UX model, never mutates a spec — so none is
+    gated. These are CONFORMANCE verbs, not intentos clones: intentos authors
+    *what* a step needs; uxos computes *how understandable/operable* the
+    realization is (verdicts carry a deterministic-vs-advisory epistemic class).
+- **`frontrails_ux_conformance`** — assess a real surface with uxos: from a raw
+  capture (`extract`) to the one-shot `audit` (conformance + the modality-neutral
+  completeness ladder + structural dark patterns), drilling into `dark_patterns`
+  / `conform` / `ux_coverage` as needed. Read-only: it computes and reports,
+  never mutates.
 - **`frontrails_spec`** — a thin, hint-driven sub-workflow. Its agent-actor
   transitions *are* the exposed IntentOS capabilities; the running LLM picks
   each one and follows IntentOS' own HATEOAS hints. No journey logic is

@@ -16,7 +16,7 @@
 # the ticket with `intentos.propose_status { ticket_id }`; a burn-down loop
 # should surface the ticket_id and move on to other worklist items rather than
 # block. See the `intentos.propose_status` capability and the workflow goals.
-version: "1.1.0"
+version: "1.2.0"
 
 connections:
   intentos:
@@ -43,6 +43,15 @@ connections:
     args: ["mcp", "serve"]
     env:
       SECURITYOS_WORKSPACE_ROOT: "."
+
+  # uxos (UX conformance) MCP server. `ux-ir-mcp` serves over stdio with no
+  # subcommand. UNLIKE the *os servers it exposes one tool PER VERB (ux.conform,
+  # ux.audit, …) rather than an `action` discriminator, so each capability names
+  # its tool directly and templates the inline `ir` document (or raw html /
+  # a11y_tree for extract) — there is no `action` field.
+  uxos:
+    kind: mcp
+    command: "ux-ir-mcp"
 
 capabilities:
   intentos.status:
@@ -263,6 +272,137 @@ capabilities:
         action: "scan"
         params: "$.arguments.params"
 
+  # --- uxos (UX conformance) ---
+  # CONFORMANCE verbs, not intentos clones: intentos AUTHORS intent, uxos
+  # COMPUTES how understandable/operable a realization is. Every uxos verb is
+  # read-only (it evaluates a model, never mutates a spec), so none is gated.
+  uxos.extract:
+    title: "uxos — extract a UX-IR from a raw capture (DOM / a11y tree)"
+    description: >
+      Deterministically turn an HTML document (`html`) or a CDP accessibility tree
+      (`a11y_tree`) into a validated UX-IR over the structural projection, with a
+      provenance trail so the capture is re-hashable for drift. The starting point
+      before conform/audit on a real page.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      properties:
+        html: { type: string }
+        a11y_tree: { type: string }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "ux.extract"
+      arguments:
+        html: "$.arguments.html"
+        a11y_tree: "$.arguments.a11y_tree"
+
+  uxos.conform:
+    title: "uxos — run all quality rules (verdicts with epistemic class + dimension)"
+    description: >
+      Evaluate every quality rule against the UX-IR and return verdicts, each tagged
+      deterministic vs advisory (a verdict touching any LLM-inferred input is advisory)
+      and named by dimension. Enumerates dimensions NOT covered so a clean run can't
+      hide a blind spot. Also reports dead ends + flow gaps.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "ux.conform"
+      arguments:
+        ir: "$.arguments.ir"
+
+  uxos.scan_dark_patterns:
+    title: "uxos — dark-patterns-structural@1 (sneaking/nagging/forced-action/preselection)"
+    description: >
+      Run the structural dark-patterns pack. Each finding is a topological fact with an
+      inspectable rationale (a modal that dominates a required flow = forced-action; a
+      choice control defaulting opt-in = preselection; …) — a deterministic verdict, not
+      an opinion.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "ux.scan_dark_patterns"
+      arguments:
+        ir: "$.arguments.ir"
+
+  uxos.audit:
+    title: "uxos — audit an experience (conformance + completeness ladder + dark patterns)"
+    description: >
+      One-shot rollup: all verdicts, the D5-inverted quantified completeness ladder
+      (highest reached rung + per-rung shortfall; behavior is the floor, screens a
+      realization tier above it), and the structural dark-patterns pack. The headline
+      "how good is this experience" verb.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "ux.audit"
+      arguments:
+        ir: "$.arguments.ir"
+
+  uxos.check_coverage:
+    title: "uxos — crossmatrix drift vs intent (stale / orphan / uncovered)"
+    description: >
+      The intent↔ux federation drift report: given the crossmatrix engine's mapping
+      cells and a coverage policy (kinds that must be mapped), return the three distinct
+      findings — stale (a cited member's content changed), orphan (a cited member is
+      gone), uncovered (a required member no cell maps). uxos never holds the mappings;
+      it re-computes drift against its current roster.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+        cells: { type: array, items: { type: object } }
+        require_covered_kinds: { type: array, items: { type: string } }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "ux.check_coverage"
+      arguments:
+        ir: "$.arguments.ir"
+        cells: "$.arguments.cells"
+        require_covered_kinds: "$.arguments.require_covered_kinds"
+
+  uxos.compare:
+    title: "uxos — structural diff of two captures (regression surface)"
+    description: >
+      Diff two UX-IR captures by member content hash: added / removed / changed node
+      ids. The muscle-memory / regression surface across two snapshots of the same
+      surface.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [before, after]
+      properties:
+        before: { type: object }
+        after: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "ux.compare"
+      arguments:
+        before: "$.arguments.before"
+        after: "$.arguments.after"
+
 proxy:
   expose:
     - { capability: intentos.status, tags: [primary], aliases: [status, health] }
@@ -277,6 +417,12 @@ proxy:
     - { capability: structureos.get_diagnostics, aliases: [diagnostics, structure_diagnostics] }
     - { capability: structureos.move, tags: [primary], aliases: [move, refactor] }
     - { capability: securityos.scan, tags: [primary], aliases: [security_scan] }
+    - { capability: uxos.extract, aliases: [extract, capture] }
+    - { capability: uxos.conform, aliases: [conform] }
+    - { capability: uxos.scan_dark_patterns, aliases: [dark_patterns] }
+    - { capability: uxos.audit, tags: [primary], aliases: [audit, ux_audit] }
+    - { capability: uxos.check_coverage, aliases: [ux_coverage, crossmatrix_drift] }
+    - { capability: uxos.compare, aliases: [ux_compare] }
 
 workflows:
   frontrails_spec:
@@ -301,6 +447,36 @@ workflows:
           propose_status: { target: working, actor: agent, executor: { capability: intentos.propose_status } }
           navigate:       { target: working, actor: agent, executor: { capability: intentos.navigate } }
           finish:         { target: done, actor: agent, executor: { capability: intentos.finish } }
+      done:
+        terminal: true
+
+  frontrails_ux_conformance:
+    description: >
+      Assess the UX conformance of a real surface with uxos. From a raw capture
+      (html / a11y_tree) extract a UX-IR, then audit it (conformance + completeness
+      ladder + dark patterns). uxos verbs are read-only — this workflow computes and
+      reports; it never mutates a spec. The running LLM decides whether to drill into
+      dark patterns or coverage after the audit.
+    initialState: assessing
+    maxChainDepth: 20
+    states:
+      assessing:
+        goal: >
+          If given a raw capture, call `extract` to get a UX-IR first. Then call `audit`
+          on the IR for the full rollup (verdicts by epistemic class + dimension, the
+          completeness ladder's highest reached rung, and structural dark patterns).
+          Drill in with `dark_patterns` or `conform` for detail, or `ux_coverage` to
+          check drift against intent. Report findings; do not fabricate numbers — every
+          verdict already carries whether it is deterministic or advisory. Call `report`
+          when the assessment is complete.
+        transitions:
+          extract:       { target: assessing, actor: agent, executor: { capability: uxos.extract } }
+          audit:         { target: assessing, actor: agent, executor: { capability: uxos.audit } }
+          conform:       { target: assessing, actor: agent, executor: { capability: uxos.conform } }
+          dark_patterns: { target: assessing, actor: agent, executor: { capability: uxos.scan_dark_patterns } }
+          ux_coverage:   { target: assessing, actor: agent, executor: { capability: uxos.check_coverage } }
+          ux_compare:    { target: assessing, actor: agent, executor: { capability: uxos.compare } }
+          report:        { target: done, actor: agent }
       done:
         terminal: true
 
