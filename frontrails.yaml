@@ -2,9 +2,17 @@
 # Consumers merge this via `include:`. FrontRails itself is never modified.
 #
 # Each FrontRails MCP server exposes ONE tool (intentos / structureos /
-# securityos) that takes an `action` discriminator + `params`. So each ACTION
-# becomes its own Flowgate capability: it calls the one tool with a fixed
+# securityos / uxos) that takes an `action` discriminator + `params`. So each
+# ACTION becomes its own Flowgate capability: it calls the one tool with a fixed
 # `action` and templates the caller's `params` in via `$.arguments.params`.
+#
+# The binding key is `map:` — NOT `arguments:`. The `mcp` executor reads only
+# `connection` + `tool` + `map` (see praxec docs/authoring-reference.md; the
+# executor literally does `cfg.get("map")`). An `arguments:` block is silently
+# IGNORED, and with no `map:` the caller's raw args pass straight through — so
+# the pinned `action` never reaches the tool and every call is malformed. That
+# was the v1.2.0 bug. `map:` resolves recursively, so a nested `params: { … }`
+# object mixing literals and `$.` paths is the correct shape.
 #
 # ASYNC-HITL (FrontRails 0.0.17): mutating IntentOS actions are human-gated.
 # When a mutation cannot reach a human — as in this headless/agent context —
@@ -16,7 +24,7 @@
 # the ticket with `intentos.propose_status { ticket_id }`; a burn-down loop
 # should surface the ticket_id and move on to other worklist items rather than
 # block. See the `intentos.propose_status` capability and the workflow goals.
-version: "1.2.0"
+version: "1.3.0"
 
 connections:
   intentos:
@@ -44,14 +52,14 @@ connections:
     env:
       SECURITYOS_WORKSPACE_ROOT: "."
 
-  # uxos (UX conformance) MCP server. `ux-ir-mcp` serves over stdio with no
-  # subcommand. UNLIKE the *os servers it exposes one tool PER VERB (ux.conform,
-  # ux.audit, …) rather than an `action` discriminator, so each capability names
-  # its tool directly and templates the inline `ir` document (or raw html /
-  # a11y_tree for extract) — there is no `action` field.
+  # uxos (UX conformance) MCP server. `uxos-mcp` serves over stdio with no
+  # subcommand. Like the other *os servers it exposes ONE tool (`uxos`) taking
+  # an `action` discriminator + `params`.
   uxos:
     kind: mcp
-    command: "ux-ir-mcp"
+    command: "uxos-mcp"
+    env:
+      UXOS_WORKSPACE_ROOT: "."
 
 capabilities:
   intentos.status:
@@ -65,7 +73,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "status"
 
   intentos.search_intent_harness:
@@ -80,7 +88,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "search_intent_harness"
         params: "$.arguments.params"
 
@@ -97,7 +105,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "propose"
         params: "$.arguments.params"
 
@@ -113,7 +121,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "navigate"
         params: "$.arguments.params"
 
@@ -129,7 +137,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "finish"
         params: "$.arguments.params"
 
@@ -149,7 +157,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "worklist"
         params: "$.arguments.params"
 
@@ -169,7 +177,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "certify"
         params: "$.arguments.params"
 
@@ -196,7 +204,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "propose_status"
         params: "$.arguments.params"
 
@@ -216,7 +224,7 @@ capabilities:
       kind: mcp
       connection: structureos
       tool: "structureos"
-      arguments:
+      map:
         action: "scan_repo"
         params: "$.arguments.params"
 
@@ -232,7 +240,7 @@ capabilities:
       kind: mcp
       connection: structureos
       tool: "structureos"
-      arguments:
+      map:
         action: "get_diagnostics"
         params: "$.arguments.params"
 
@@ -249,7 +257,7 @@ capabilities:
       kind: mcp
       connection: structureos
       tool: "structureos"
-      arguments:
+      map:
         action: "move"
         params: "$.arguments.params"
 
@@ -268,7 +276,7 @@ capabilities:
       kind: mcp
       connection: securityos
       tool: "securityos"
-      arguments:
+      map:
         action: "scan"
         params: "$.arguments.params"
 
@@ -292,10 +300,12 @@ capabilities:
     executor:
       kind: mcp
       connection: uxos
-      tool: "ux.extract"
-      arguments:
-        html: "$.arguments.html"
-        a11y_tree: "$.arguments.a11y_tree"
+      tool: "uxos"
+      map:
+        action: "extract"
+        params:
+          html: "$.arguments.html"
+          a11y_tree: "$.arguments.a11y_tree"
 
   uxos.conform:
     title: "uxos — run all quality rules (verdicts with epistemic class + dimension)"
@@ -313,9 +323,11 @@ capabilities:
     executor:
       kind: mcp
       connection: uxos
-      tool: "ux.conform"
-      arguments:
-        ir: "$.arguments.ir"
+      tool: "uxos"
+      map:
+        action: "conform"
+        params:
+          ir: "$.arguments.ir"
 
   uxos.scan_dark_patterns:
     title: "uxos — dark-patterns-structural@1 (sneaking/nagging/forced-action/preselection)"
@@ -333,9 +345,11 @@ capabilities:
     executor:
       kind: mcp
       connection: uxos
-      tool: "ux.scan_dark_patterns"
-      arguments:
-        ir: "$.arguments.ir"
+      tool: "uxos"
+      map:
+        action: "scan_dark_patterns"
+        params:
+          ir: "$.arguments.ir"
 
   uxos.audit:
     title: "uxos — audit an experience (conformance + completeness ladder + dark patterns)"
@@ -353,9 +367,11 @@ capabilities:
     executor:
       kind: mcp
       connection: uxos
-      tool: "ux.audit"
-      arguments:
-        ir: "$.arguments.ir"
+      tool: "uxos"
+      map:
+        action: "audit"
+        params:
+          ir: "$.arguments.ir"
 
   uxos.check_coverage:
     title: "uxos — crossmatrix drift vs intent (stale / orphan / uncovered)"
@@ -376,11 +392,13 @@ capabilities:
     executor:
       kind: mcp
       connection: uxos
-      tool: "ux.check_coverage"
-      arguments:
-        ir: "$.arguments.ir"
-        cells: "$.arguments.cells"
-        require_covered_kinds: "$.arguments.require_covered_kinds"
+      tool: "uxos"
+      map:
+        action: "check_coverage"
+        params:
+          ir: "$.arguments.ir"
+          cells: "$.arguments.cells"
+          require_covered_kinds: "$.arguments.require_covered_kinds"
 
   uxos.compare:
     title: "uxos — structural diff of two captures (regression surface)"
@@ -398,10 +416,12 @@ capabilities:
     executor:
       kind: mcp
       connection: uxos
-      tool: "ux.compare"
-      arguments:
-        before: "$.arguments.before"
-        after: "$.arguments.after"
+      tool: "uxos"
+      map:
+        action: "compare"
+        params:
+          before: "$.arguments.before"
+          after: "$.arguments.after"
 
 proxy:
   expose:

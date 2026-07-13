@@ -13,11 +13,16 @@ stay authoritative.**
 
 ## What's in the box
 
-The three `*os` servers each expose ONE MCP tool (`intentos` / `structureos` /
-`securityos`) that takes an `action` discriminator + `params`, so each action
-becomes its own Praxec capability (fixed `action` + templated `$.arguments.params`).
-uxos (`ux-ir-mcp`) is the exception: it exposes one tool per verb, so each uxos
-capability names its tool directly and templates the inline `ir` document.
+All four `*os` servers each expose ONE MCP tool (`intentos` / `structureos` /
+`securityos` / `uxos`) that takes an `action` discriminator + `params`, so each
+action becomes its own Praxec capability (fixed `action` + templated
+`$.arguments.params`).
+
+Bindings use `map:` — **not** `arguments:`. The `mcp` executor reads only
+`connection` + `tool` + `map`; an `arguments:` block is silently ignored, and
+without a `map:` the caller's raw args pass straight through, so the pinned
+`action` never reaches the tool. `map:` resolves recursively, which is what lets
+a capability assemble a nested `params: { … }` from literals and `$.` paths.
 
 - **Individual capabilities** (one per action), each exposed via `proxy.expose`
   with tags + aliases for discovery:
@@ -28,14 +33,13 @@ capability names its tool directly and templates the inline `ir` document.
     `structureos.move`
   - SecurityOS: `securityos.scan`
   - uxos: `uxos.extract`, `uxos.conform`, `uxos.scan_dark_patterns`,
-    `uxos.audit`, `uxos.check_coverage`, `uxos.compare`. Unlike the `*os`
-    servers, `ux-ir-mcp` exposes one tool PER VERB (no `action` discriminator),
-    so each capability names its tool directly and templates the inline `ir`
-    document (or raw `html` / `a11y_tree` for extract). Every uxos verb is
-    **read-only** — it evaluates a UX model, never mutates a spec — so none is
-    gated. These are CONFORMANCE verbs, not intentos clones: intentos authors
-    *what* a step needs; uxos computes *how understandable/operable* the
-    realization is (verdicts carry a deterministic-vs-advisory epistemic class).
+    `uxos.audit`, `uxos.check_coverage`, `uxos.compare` — the `uxos` tool's
+    actions, each templating the inline `ir` document (or raw `html` /
+    `a11y_tree` for extract). Every uxos verb is **read-only** — it evaluates a
+    UX model, never mutates a spec — so none is gated. These are CONFORMANCE
+    verbs, not intentos clones: intentos authors *what* a step needs; uxos
+    computes *how understandable/operable* the realization is (verdicts carry a
+    deterministic-vs-advisory epistemic class).
 - **`frontrails_ux_conformance`** — assess a real surface with uxos: from a raw
   capture (`extract`) to the one-shot `audit` (conformance + the modality-neutral
   completeness ladder + structural dark patterns), drilling into `dark_patterns`
