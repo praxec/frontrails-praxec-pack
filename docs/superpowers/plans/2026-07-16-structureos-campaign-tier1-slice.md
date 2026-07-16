@@ -25,11 +25,14 @@
 ## File Structure
 
 - `tests/fixtures/rust-findings/` — throwaway cargo crate with a seeded unused import (Task 1).
-- `frontrails-campaign.yaml` — additive config: the `workflows:` + `scripts:` for the campaign (Tasks 2, 4, 5).
+- `frontrails-campaign.yaml` — additive config: language-neutral campaign `workflows:` + core `scripts:` (report, git.commit-branch) (Tasks 2, 4, 5).
+- `extensions/rust.yaml` — the **Rust language extension**: `ext.rust.detect-safe` + `ext.rust.fix-safe` scripts (the `detect.safe`/`fix.safe` seam; `verify.build` is the referenced `verify.cargo.cwd`) (Task 3).
 - `taxonomy.finding-tiers.yaml` — canonical SOS-code → tier → treatment table; source of truth (Task 2).
-- `examples/campaign-check.yaml` — a minimal gateway config that includes both pack files, for `praxec check` (Task 2).
+- `examples/campaign-check.yaml` — a minimal gateway config that includes the pack files + the rust extension, for `praxec check` (Task 2).
 - `README.md` — a "Campaign wiring" section documenting the additive include + `cognitive-architectures` dependency (Task 2).
 - `docs/superpowers/plans/` — this plan.
+
+**Language-extension seam (spec §5a):** the campaign core is language-neutral. Tier-1 detect/fix/verify come from a per-language extension exposing `detect.safe`/`fix.safe`/`verify.build`, selected by the flow's `language` input. v1 ships only the Rust extension. The orchestrator resolves the seam via `initialContext` subjects (`ext_detect_safe`, `ext_fix_safe`, `ext_verify_build`) set from `language` — Task 4 verifies whether `subject:` accepts a `$.context.*` path and falls back to literal Rust subjects if not.
 
 **Note on "taxonomy as data the flow reads":** praxec flows cannot read an arbitrary YAML file at runtime. For this slice the taxonomy file is the **canonical human-facing source of truth**, and `flow.findings.sweep-safe` encodes its one relevant code (`SOS027`) in `initialContext` consistent with it. A Phase-2 loader script can consume the file when Tier 3 routes many codes. This is an accepted realization of spec §5, not a deviation.
 
@@ -165,8 +168,10 @@ workflows: {}    # filled in Task 4
 include:
   - frontrails.yaml
   - frontrails-campaign.yaml
-  # Base + max cognitive repos supply verify.cargo.cwd and (Phase 2)
-  # flow.refactor.god-file. Adjust paths to your checkout.
+  - extensions/rust.yaml          # the Rust language extension (Task 3)
+  # Base cognitive repo supplies verify.cargo.cwd (the Rust `verify.build`),
+  # and (Phase 2) cognitive-architectures-max supplies flow.refactor.god-file.
+  # Adjust paths to your checkout.
   - ../cognitive-architectures/scripts-library/verify.cargo.cwd.yaml
 ```
 
@@ -208,47 +213,64 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ---
 
-### Task 3: `fix.unused-imports` script
+### Task 3: Rust language extension (`ext.rust.detect-safe` + `ext.rust.fix-safe`)
 
 **Files:**
-- Modify: `frontrails-campaign.yaml` (fill the `scripts:` map)
+- Create: `extensions/rust.yaml`
 
 **Interfaces:**
-- Produces: script `fix.unused-imports` — argv `$1` = working dir (defaults to `$PWD`); emits JSON `{passed: bool, fixed_count: int, before: int, after: int, summary: string}` on stdout; exit 0 always. Consumed by `flow.findings.sweep-safe`'s `fixing` state (Task 4).
+- Produces the Rust half of the language seam (spec §5a), both scripts taking argv `$1` = working dir (defaults to `$PWD`), exit 0 always:
+  - `ext.rust.detect-safe` → JSON `{count: int}` — number of `unused import` warnings (the `detect.safe` seam).
+  - `ext.rust.fix-safe` → JSON `{passed: bool, fixed_count: int, before: int, after: int, summary: string}` — the `fix.safe` seam (deterministic `cargo fix`).
+  - (The Rust `verify.build` seam is the *referenced* `verify.cargo.cwd`; no new script.)
+- Consumed by `flow.findings.sweep-safe`'s `probing` and `fixing` states (Task 4) via the seam subjects.
 
-- [ ] **Step 1: Write the failing test (run script against the fixture, expect the import gone)**
+- [ ] **Step 1: Write the failing test (run detect against the fixture, expect count 1)**
 
-Create `tests/fixtures/rust-findings/.gitignore` is not needed; instead write a shell assertion (this is the "test"):
 ```bash
-# Save the fixture's clean state, run the script body, assert the import is gone.
-cp tests/fixtures/rust-findings/src/lib.rs /tmp/lib.rs.bak
-bash -c "$SCRIPT_BODY" _ tests/fixtures/rust-findings   # SCRIPT_BODY = the body from Step 2
-grep -q "use std::collections::HashMap;" tests/fixtures/rust-findings/src/lib.rs && echo FAIL || echo PASS
+# detect.safe on the untouched fixture must report exactly one unused import.
+# (Body = ext.rust.detect-safe from Step 2; run with arg = the fixture dir.)
+git checkout tests/fixtures/rust-findings/src/lib.rs 2>/dev/null || true
+bash -c "$DETECT_BODY" _ tests/fixtures/rust-findings | jq -e '.count == 1'
 ```
-Expected before implementing: FAIL (script does not exist).
+Expected before implementing: FAIL (script does not exist / no JSON).
 
-- [ ] **Step 2: Implement the script in `frontrails-campaign.yaml`**
+- [ ] **Step 2: Implement the Rust extension in `extensions/rust.yaml`**
 
-Replace `scripts: {}` with:
 ```yaml
+# extensions/rust.yaml
+# The Rust language extension — the detect.safe / fix.safe half of the campaign's
+# language seam (spec §5a). verify.build for Rust is the referenced
+# verify.cargo.cwd (base cognitive-architectures). No StructureOS here: the
+# compiler is the deterministic source of truth for the safe tier (SOS027 is
+# unreliable — rustc cross-check is suppressed by default).
+version: "1.0.0"
 scripts:
-  fix.unused-imports:
+  ext.rust.detect-safe:
+    verb: detect
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # detect.safe (Rust): count unused-import warnings. Emits {count}. exit 0.
+      set -uo pipefail
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      count=$(cargo build --message-format=short 2>&1 | grep -c "unused import" || true)
+      printf '{"count": %s}\n' "$count"
+
+  ext.rust.fix-safe:
     verb: fix
     lifecycle: experimental
     source: frontrails-praxec-pack
     body: |
       #!/usr/bin/env bash
-      # Deterministically remove unused imports with `cargo fix`. rustfix applies
-      # ONLY MachineApplicable suggestions — compiler-verified, behavior-preserving
-      # — so there is no LLM and no judgment in this path (spec §8). Emits
-      # {passed, fixed_count, before, after, summary}; exit 0 always (reporting;
-      # the build gate decides).
+      # fix.safe (Rust): deterministically remove unused imports with `cargo fix`.
+      # rustfix applies ONLY MachineApplicable suggestions — compiler-verified,
+      # behavior-preserving — so no LLM, no judgment (spec §8). Emits
+      # {passed, fixed_count, before, after, summary}; exit 0 always.
       set -uo pipefail
-      cwd="${1:-$PWD}"
-      cd "$cwd" 2>/dev/null || true
-
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
       count_unused() { cargo build --message-format=short 2>&1 | grep -c "unused import" || true; }
-
       before=$(count_unused)
       log=$(cargo fix --allow-dirty --allow-staged --lib --bins --tests 2>&1) && passed=true || passed=false
       after=$(count_unused)
@@ -258,27 +280,30 @@ scripts:
         "$passed" "$fixed" "$before" "$after" "$summary"
 ```
 
-- [ ] **Step 3: Run the test to verify it passes**
+- [ ] **Step 3: Verify detect.safe passes (count 1) then fix.safe removes the import**
 
-Extract the body and run it against a copy of the fixture:
 ```bash
-git checkout tests/fixtures/rust-findings/src/lib.rs   # restore clean fixture
-# (run the fix.unused-imports body with arg = tests/fixtures/rust-findings)
+git checkout tests/fixtures/rust-findings/src/lib.rs
+# detect: expect count 1
+bash -c "$DETECT_BODY" _ tests/fixtures/rust-findings | jq -e '.count == 1'   # exit 0
+# fix: apply, then assert the import is gone
+bash -c "$FIX_BODY" _ tests/fixtures/rust-findings >/dev/null
 grep -q "use std::collections::HashMap;" tests/fixtures/rust-findings/src/lib.rs && echo FAIL || echo PASS
+git checkout tests/fixtures/rust-findings/src/lib.rs   # restore
 ```
-Expected: PASS (the import was removed). Then restore: `git checkout tests/fixtures/rust-findings/src/lib.rs`.
+Expected: detect `jq -e` exit 0; then `PASS` (import removed).
 
-- [ ] **Step 4: Verify the JSON contract**
+- [ ] **Step 4: Verify both JSON contracts**
 
-Run the body and pipe stdout to `jq -e '.passed and (.fixed_count|type=="number") and (.summary|type=="string")'`.
-Expected: exit 0 (all fields present and typed).
+- `ext.rust.detect-safe` → `jq -e '.count|type=="number"'` → exit 0.
+- `ext.rust.fix-safe` → `jq -e '.passed and (.fixed_count|type=="number") and (.summary|type=="string")'` → exit 0.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git checkout tests/fixtures/rust-findings/src/lib.rs
-git add frontrails-campaign.yaml
-git commit -m "feat(campaign): fix.unused-imports script (deterministic cargo fix)
+git add extensions/rust.yaml
+git commit -m "feat(campaign): Rust language extension (detect.safe + fix.safe via cargo)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ```
@@ -291,8 +316,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Modify: `frontrails-campaign.yaml` (fill the `workflows:` map)
 
 **Interfaces:**
-- Consumes: `fix.unused-imports` (Task 3), `verify.cargo.cwd` (referenced), `structureos` connection + tool (from `frontrails.yaml`).
-- Produces: workflow `flow.findings.sweep-safe`, initialState `scanning`, terminal `done`. State path: `scanning → collecting → gate_empty → {done | fixing → building → build_gate → {reporting → committing → done | needs_human → done}}`.
+- Consumes: the language seam (`ext.rust.detect-safe`, `ext.rust.fix-safe` from Task 3; `verify.cargo.cwd` referenced), and the core scripts `report.sweep-safe` + `git.commit-branch` (Task 5). **No `structureos` in the Tier-1 path** (spec §5a).
+- Produces: workflow `flow.findings.sweep-safe`, initialState `probing`, terminal `done`. State path: `probing → gate_empty → {done | fixing → building → build_gate → {reporting → committing → done | needs_human → done}}`.
+
+- [ ] **Step 1a: Verify whether `subject:` accepts a `$.context.*` path (seam mechanism)**
+
+Author a one-off transition with `subject: "$.context.ext_fix_safe"` and run `praxec check`. If it resolves, the orchestrator below drives the seam dynamically from `language`. If praxec requires a literal `subject:`, replace the three `"$.context.ext_*"` subjects below with their literal Rust values (`ext.rust.detect-safe`, `ext.rust.fix-safe`, `verify.cargo.cwd`) and note in the report that language selection is realized by include-swapping the extension file (still language-neutral core, static per config). Record which mechanism praxec supports.
 
 - [ ] **Step 1: Write the orchestrator (structural "test" is `praxec check` in Step 2)**
 
@@ -306,12 +335,16 @@ workflows:
       (SOS027) via cargo fix, gated by a cargo build. Commits a branch; a human
       opens the PR. A red build surfaces to needs_human — a deterministic fix
       producing a red build is itself a finding.
-    initialState: scanning
+    initialState: probing
     initialContext:
-      act_scan: "scan_repo"
-      act_diag: "get_diagnostics"
-      empty_params: {}
-      diag_params: { id: "SOS027" }
+      # Language-extension seam (spec §5a): these three subjects are the
+      # detect.safe / fix.safe / verify.build seam, resolved from `language`.
+      # v1 wires Rust. If praxec requires literal `subject:` (Step 1a), replace
+      # the "$.context.ext_*" references in the states with these values.
+      language: "rust"
+      ext_detect_safe: "ext.rust.detect-safe"
+      ext_fix_safe: "ext.rust.fix-safe"
+      ext_verify_build: "verify.cargo.cwd"
       finding_count: 0
       fixed_count: 0
       build_passed: false
@@ -319,40 +352,18 @@ workflows:
       build_issues: ""
     states:
 
-      scanning:
-        goal: Refresh the structural model so diagnostics are current.
+      probing:
+        goal: Detect safe auto-fixable findings via the language extension (detect.safe).
         transitions:
-          scan:
-            target: collecting
-            actor: deterministic
-            executor:
-              kind: mcp
-              connection: structureos
-              tool: structureos
-              map:
-                action: "$.context.act_scan"
-                params: "$.context.empty_params"
-            output:
-              scan_result: "$.output"
-
-      collecting:
-        goal: Count unused-import (SOS027) findings.
-        transitions:
-          collect:
+          probe:
             target: gate_empty
             actor: deterministic
             executor:
-              kind: mcp
-              connection: structureos
-              tool: structureos
-              map:
-                action: "$.context.act_diag"
-                params: "$.context.diag_params"
+              kind: script
+              subject: "$.context.ext_detect_safe"
+              workingDirectory: "$.run.repo_root"
             output:
-              diagnostics: "$.output"
-              # BIND the count path to the shape recorded in Task 1 Step 4,
-              # e.g. "$.output._summary.by_id.SOS027".
-              finding_count: "$.output._summary.by_id.SOS027"
+              finding_count: "$.output.json.count"
 
       gate_empty:
         transitions:
@@ -366,27 +377,27 @@ workflows:
             guards: [ { kind: expr, expr: "$.context.finding_count > 0" } ]
 
       fixing:
-        goal: Deterministically remove unused imports (cargo fix; NO agent).
+        goal: Apply the deterministic fix via the language extension (fix.safe; NO agent).
         transitions:
           fix:
             target: building
             actor: deterministic
             executor:
               kind: script
-              subject: fix.unused-imports
+              subject: "$.context.ext_fix_safe"
               workingDirectory: "$.run.repo_root"
             output:
               fixed_count: "$.output.json.fixed_count"
 
       building:
-        goal: Cargo build gate — the real acceptance test.
+        goal: Build/test gate via the language extension (verify.build) — the real acceptance test.
         transitions:
           build:
             target: build_gate
             actor: deterministic
             executor:
               kind: script
-              subject: verify.cargo.cwd
+              subject: "$.context.ext_verify_build"
               workingDirectory: "$.run.repo_root"
             output:
               build_passed: "$.output.json.passed"
@@ -432,8 +443,9 @@ workflows:
 
       needs_human:
         goal: >
-          cargo fix broke the build — a deterministic fix producing a red build
-          is itself a finding. Review $.context.build_issues and decide.
+          The deterministic fix broke the build — a compiler-verified fix
+          producing a red build is itself a finding. Review $.context.build_issues
+          and decide.
         transitions:
           review:
             target: done
@@ -462,7 +474,7 @@ With the gateway served against the fixture (`praxec serve --config examples/cam
 ```
 praxec.query { subject: "flow.findings.sweep-safe" }   # describe
 ```
-Expected: a state graph with `scanning` as initial and `done` terminal; every transition target present; `structural_fingerprint` returned.
+Expected: a state graph with `probing` as initial and `done` terminal; every transition target present; `structural_fingerprint` returned.
 
 - [ ] **Step 4: Commit**
 
@@ -641,7 +653,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 **Spec coverage (§ by §):**
 - §2 additive include, agent-free Tier 1, reference verify.cargo, no migration → Tasks 2, 3, 4 (constraints enforced). ✓
 - §4 Tier-1 DoD (fixed-and-build-verified or clean no-op) → Task 4 `gate_empty`/`build_gate`. ✓
-- §5 taxonomy + unknown→Tier3 (this slice only touches SOS027) → Task 2 taxonomy; slice never acts on other codes. ✓
+- §5 taxonomy + unknown→Tier3 → Task 2 taxonomy (canonical doc). §5a language seam → Task 3 Rust extension (`detect.safe`/`fix.safe`) + Task 4 orchestrator dispatches via the seam; StructureOS is NOT in the Tier-1 path. ✓
 - §7 Tier-1 state machine (incl. red→needs_human) → Task 4. ✓
 - §8 safety (no LLM, verify.cargo mirrors CI) → Task 3 (cargo fix only), referenced verify.cargo.cwd. ✓
 - §9 observability (per-run report) → Task 5 `report.sweep-safe`. ✓
@@ -654,6 +666,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 **Type/name consistency:** `finding_count`, `fixed_count`, `build_passed`, `build_summary`, `build_issues` are defined in `initialContext` (Task 4) and consumed by the same names in `report.sweep-safe` (Task 5). Script subjects `fix.unused-imports` (Task 3), `verify.cargo.cwd` (referenced), `report.sweep-safe` + `git.commit-branch` (Task 5) match their `subject:` references in the orchestrator (Task 4). `{passed, issues, summary}` matches `verify.cargo.cwd`'s real contract; `{passed, fixed_count, before, after, summary}` matches `fix.unused-imports`.
 
 **Known live-verification points to confirm during execution (poka-yoke, not guesses):**
-1. `get_diagnostics {id:"SOS027"}` count path (Task 1 Step 4).
+1. Whether `subject:` accepts a `$.context.*` path (Task 4 Step 1a) — dynamic language seam vs. literal-subject fallback (v1 still ships only Rust either way).
 2. The script-executor env/argv contract for passing `$.context.*` into `report.sweep-safe` (Task 5 Step 1 uses `PRAXEC_CTX_*` with `:-` fallbacks; confirm against the gateway's script-env docs and adjust).
-3. `praxec` subcommand names (`check`, `serve`) against the installed gateway version.
+3. `praxec` subcommands confirmed available on the installed gateway: `check`, `serve`, `command`, `observe`.
+4. (Resolved by dogfooding) StructureOS `SOS027` is NOT a reliable Tier-1 signal — rustc cross-check suppressed by default; Tier-1 uses the compiler via the Rust extension instead.
