@@ -4,7 +4,7 @@
 
 **Goal:** Prove the whole praxec plumbing end-to-end with the safest tier — a deterministic, agent-free flow that removes unused-import findings (SOS027) via `cargo fix`, gated by a cargo build, against a fixture repo.
 
-**Architecture:** An additive `frontrails-campaign.yaml` (deep-merges alongside `frontrails.yaml`, no breaking migration) declares one orchestrator `flow.findings.sweep-safe`. It calls StructureOS via the proven `kind: mcp`/`map:` executor (same as `cognitive-max/flow.refactor.god-file`), runs a new `fix.unused-imports` script (cargo fix — rustfix applies only compiler-verified `MachineApplicable` suggestions), gates on the referenced `verify.cargo.cwd` script, emits a per-run observability report, and commits a branch. A human/CI opens the PR.
+**Architecture:** An additive `frontrails-campaign.yaml` (deep-merges alongside `frontrails.yaml`, no breaking migration) declares one orchestrator `flow.findings.sweep-safe`. Tier-1 detect/fix/verify come from a per-language extension (spec §5a) — **no StructureOS in the Tier-1 path** (its `SOS027` is unreliable). For Rust that is `inspect.rust.safe-findings` + `run.rust.fix-safe` (cargo fix — rustfix applies only compiler-verified `MachineApplicable` suggestions) from `extensions/rust.yaml`, gated on the referenced `verify.cargo.cwd` script; then it emits a per-run observability report and commits a branch. A human/CI opens the PR.
 
 **Tech Stack:** praxec (gateway `praxec`, config YAML — orchestrators/scripts/capabilities), StructureOS MCP (`structureos-mcp`), bash + `jq` + Rust `cargo`.
 
@@ -14,7 +14,7 @@
 
 - Design home: `frontrails-praxec-pack`; additive include only — **never** convert to a `praxec.repo.yaml` layout in this slice (spec §2, §13).
 - Tier 1 is **agent-free**: no `actor: agent` / `kind: llm` in `flow.findings.sweep-safe`. Only `deterministic`, `human`, `noop`, `script`, `mcp` executors (spec §7, §8).
-- StructureOS is called via `kind: mcp, connection: structureos, tool: structureos, map: {action, params}` — the god-file-proven pattern; both `action` and `params` must resolve (fail-fast) (frontrails.yaml convention).
+- **No StructureOS in the Tier-1 path** (spec §5a) — Tier-1 detect/fix/verify come from the language-extension seam (`inspect.rust.safe-findings`/`run.rust.fix-safe`/`verify.cargo.cwd`), because `SOS027` is unreliable. (StructureOS returns as the language-neutral structural source in Tier 2/3, separate plans.)
 - The build gate is the **referenced** `verify.cargo.cwd` from base `cognitive-architectures` (contract `{passed, issues, summary}`, always exit 0) — do NOT copy it into the pack (spec §2).
 - CI parity: any cargo verification mirrors frontrails CI — `cargo fmt --check`, `clippy --workspace -D warnings` (NO `--all-targets`), `test` (spec §8). `verify.cargo.cwd` already encodes this; do not re-implement.
 - Unknown StructureOS codes are never auto-mutated (spec §5). This slice only ever acts on `SOS027`.

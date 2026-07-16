@@ -118,43 +118,25 @@ Expected: `OK_IMPORT`, `OK_REPORT`, `OK_BRANCH`. Also confirm the workflow's
 final `state` is `done` (not `needs_human`) and `result.status` is
 `succeeded` in the `praxec command` response.
 
-## Known gap: the report's `tier1.fixed` / findings counts read as 0
+## Observability: the report carries real values (resolved in `f1644fe`)
 
-The flow itself is sound end-to-end (import removed, build gate green,
-`done`, branch committed). But `run.campaign.sweep-report`
-(`frontrails-campaign.yaml`) reads its inputs from `PRAXEC_CTX_finding_count`
-/ `PRAXEC_CTX_fixed_count` / `PRAXEC_CTX_build_passed` / `PRAXEC_RUN_ID`
-environment variables with a `:-0`/`:-false` fallback — **that env-var
-contract does not exist**. Verified by inspecting the script executor's
-actual environment (`env | sort` from inside a script body): `praxec` injects
-exactly two script-scoped variables, `PRAXEC_SCRIPT_HASH` and
-`PRAXEC_SCRIPT_SUBJECT` — no `PRAXEC_CTX_*`, no `PRAXEC_RUN_ID`. Everything
-else in the child environment is just the parent process's inherited
-environment.
+Early runs wrote `{"tier1":{"fixed":0,"gate_result":false}}` on every run: the
+`run.campaign.sweep-report` script had assumed a `PRAXEC_CTX_*` / `PRAXEC_RUN_ID`
+env contract that does not exist (`praxec` injects only `PRAXEC_SCRIPT_HASH`
+and `PRAXEC_SCRIPT_SUBJECT`). Commit `f1644fe` wired the run context through
+the `reporting` state's executor via templated `args:`, which the report
+script reads positionally — so the report now carries the real run values.
 
-Per `docs/reference/spec.md` in `praxec-kernel`, the real `kind: script`
-contract for passing workflow context into a script is explicit, not
-ambient:
+Two praxec facts confirmed while fixing it:
+- `workingDirectory:` sets the process **cwd** (it does not consume an argv
+  slot); `args:` entries become argv[1], argv[2], … in order.
+- Executor templating uses **jsonpath `$.context.x` syntax, not Handlebars
+  `{{ }}`** — a literal `{{$.context.x}}` passes through unresolved (the praxec
+  spec's brace example is misleading). No run-id is templatable, so the report
+  stamp uses a UTC wall-clock value.
 
-```yaml
-executor:
-  kind: script
-  subject: run.campaign.sweep-report
-  workingDirectory: "$.run.repo_root"
-  args: ["{{$.context.finding_count}}"]      # templated argv
-  env: { PRAXEC_CTX_fixed_count: "{{$.context.fixed_count}}" }  # templated env
-```
-
-`flow.findings.sweep-safe`'s `reporting` state has neither an `args:` nor an
-`env:` block on the `report` transition's executor today, so the script has
-no way to see `$.context.finding_count` / `fixed_count` / `build_passed` —
-it silently falls back to `0`/`0`/`false` every time, even on a real fix.
-The resulting report JSON is therefore always
-`{"tier1":{"fixed":0,"gate_result":"false"}}` regardless of the actual run —
-a silent, always-wrong observability report. **This is a real defect to fix
-in `frontrails-campaign.yaml`'s `reporting` state (wire `env:`/`args:` on the
-`report` transition), not a gap in this test procedure**; recorded here as
-the go/no-go signal for the report-contract itself.
+A verified run now produces:
+`{"tier":1,"findings_in":{"SOS027":1},"tier1":{"fixed":1,"gate_result":true},"unknown_codes":[]}`.
 
 ## Cleanup
 
