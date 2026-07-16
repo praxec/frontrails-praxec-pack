@@ -581,20 +581,27 @@ Create `tests/campaign-tier1-e2e.md`:
 # Tier-1 sweep-safe E2E (go/no-go)
 
 Requires `praxec` + `structureos-mcp` on PATH and a checkout of
-`cognitive-architectures` beside this repo.
+`cognitive-architectures` beside this repo. The mutating run happens in an
+ISOLATED throwaway copy so it never touches the pack repo.
 
-1. Restore the fixture clean: `git checkout tests/fixtures/rust-findings/src/lib.rs`
-2. Structure check: `praxec check --config examples/campaign-check.yaml`  → exit 0
-3. Serve against the fixture as repo root:
-   `cd tests/fixtures/rust-findings && praxec serve --config ../../../examples/campaign-check.yaml`
+1. Copy the fixture to a throwaway git repo:
+   ```bash
+   WORK=$(mktemp -d)
+   cp -r tests/fixtures/rust-findings/. "$WORK/"
+   git -C "$WORK" init -q && git -C "$WORK" add -A \
+     && git -C "$WORK" -c user.email=e2e@local -c user.name=e2e commit -qm init
+   CFG="$PWD/examples/campaign-check.yaml"   # absolute — includes resolve relative to the config file
+   ```
+2. Structure check: `praxec check --config "$CFG"`  → exit 0
+3. Serve with the throwaway as repo root: `cd "$WORK" && praxec serve --config "$CFG"`
 4. Start the flow: `praxec.command { definitionId: "flow.findings.sweep-safe", input: {} }`
 5. Drive deterministic transitions to `done` (follow the returned `links`).
 
-## Acceptance
-- `src/lib.rs` no longer contains `use std::collections::HashMap;`
+## Acceptance (all assertions against $WORK)
+- `$WORK/src/lib.rs` no longer contains `use std::collections::HashMap;`
 - final state is `done` (not `needs_human`)
-- `.praxec/reports/sweep-safe-*.json` exists with `tier1.fixed >= 1`
-- branch `campaign/sweep-safe` exists with one commit
+- `$WORK/.praxec/reports/sweep-safe-*.json` exists with `tier1.fixed >= 1`
+- branch `campaign/sweep-safe` exists in `$WORK` with one commit
 ```
 
 - [ ] **Step 2: Execute the E2E and capture the run**
@@ -606,18 +613,16 @@ Expected: final `status: succeeded`, terminal state `done`, `tier1.fixed >= 1`.
 
 Run:
 ```bash
-grep -q "use std::collections::HashMap;" tests/fixtures/rust-findings/src/lib.rs && echo FAIL_IMPORT || echo OK_IMPORT
-ls .praxec/reports/sweep-safe-*.json >/dev/null 2>&1 && echo OK_REPORT || echo FAIL_REPORT
-git rev-parse --verify campaign/sweep-safe >/dev/null 2>&1 && echo OK_BRANCH || echo FAIL_BRANCH
+grep -q "use std::collections::HashMap;" "$WORK/src/lib.rs" && echo FAIL_IMPORT || echo OK_IMPORT
+ls "$WORK"/.praxec/reports/sweep-safe-*.json >/dev/null 2>&1 && echo OK_REPORT || echo FAIL_REPORT
+git -C "$WORK" rev-parse --verify campaign/sweep-safe >/dev/null 2>&1 && echo OK_BRANCH || echo FAIL_BRANCH
 ```
 Expected: `OK_IMPORT`, `OK_REPORT`, `OK_BRANCH`.
 
-- [ ] **Step 4: Restore fixture + clean up the run branch**
+- [ ] **Step 4: Discard the throwaway repo (pack fixture was never mutated)**
 
 ```bash
-git checkout tests/fixtures/rust-findings/src/lib.rs
-git branch -D campaign/sweep-safe 2>/dev/null || true
-rm -rf .praxec/reports
+rm -rf "$WORK"
 ```
 
 - [ ] **Step 5: Commit the E2E doc**
