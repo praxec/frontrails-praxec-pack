@@ -26,6 +26,7 @@ This design was adversarially vetted (FMECA + poka-yoke + TRIZ). The vetting rem
 - **Stateless re-runs, not durable resume.** Each run scans fresh, does up to `budget` structural targets, stops. "Resume" = run again. Removes a correctness dependency on praxec suspend/resume surviving repo drift.
 - **No top sequencer, no `cap.coordinate.pr-open` in v1.** Operators run the tier-flows deliberately; flows commit a branch and a human/CI opens the PR.
 - **Observability added** (§9) — the original design defined none.
+- **Language-extension seam (added after Task-1 dogfooding).** The campaign core is language-neutral. Tier-1 detection/fix/verify are inherently language-specific and were wrongly keyed on StructureOS `SOS027` (unreliable: rustc-lint cross-check is suppressed/empty by default). They now come from a per-language **extension** exposing a stable seam — `detect.safe`, `fix.safe`, `verify.build` — selected by the target repo's `language`. StructureOS stays the language-neutral *structural* finding source (Tiers 2–3). v1 ships only the **Rust** extension (cargo); adding TypeScript/Python later is a new extension file, zero change to the core. See §5a.
 
 ## 3. Where it lives
 
@@ -56,11 +57,25 @@ Shipped as `taxonomy.finding-tiers.yaml`, read by the flows. Re-tiering is a tab
 
 | Tier | v1 treatment | Finding classes | Mechanism |
 |---|---|---|---|
-| **1 — Deterministic auto-fix** | `cargo fix` → build-gate → batch PR | `SOS027` unused_imports | compiler-driven, **no LLM, no judgment** |
+| **1 — Deterministic auto-fix** | language-extension `detect.safe` → `fix.safe` → `verify.build` → batch PR | safe auto-fixable class (Rust: unused imports) | via the per-language seam (§5a); **no LLM, no judgment** |
 | **2 — Structural refactor** | per-target human gate → referenced sub-flow | `SOS001` god_files | `cognitive-max/flow.refactor.god-file` |
 | **3 — Advisory report** | enumerate; human opt-in fix / dismiss-with-rationale / defer | `SOS025` dead_code, `SOS014` god_methods, `SOS020` cycles, `SOS103` large_public_surface, `SOS010` complexity, `SOS012` hygiene, `SOS016` test-concentration, `SOS028` composition, `SOS037` packaging, `SOS061` behavioral-risk, **+ every unrecognized SOS0xx** | report + optional `dismiss_finding` |
 
 **Phase-2 promotions (post-dogfood):** `god_methods` → Tier 2 via new `flow.refactor.method`; `import_cycles` → Tier 2 via new `flow.refactor.cycle`. Until their lossy-edge profiles are characterized by manual dogfooding, they stay in the Tier 3 report — *not* auto-refactored.
+
+## 5a. Language-extension seam (Tier-1 mechanism)
+
+The campaign core is **language-neutral**. Tier-1 detection, fix, and verify are inherently language-specific, so they live in a per-language **extension**, not the core. Each extension exposes a stable seam:
+
+| Seam capability | Contract | Rust extension (v1) |
+|---|---|---|
+| `detect.safe` | → `{ count: int }` — how many safe auto-fixable findings exist | count `cargo` `unused import` warnings |
+| `fix.safe` | apply the deterministic, compiler-verified fix → `{ fixed_count, summary }` | `cargo fix` (rustfix MachineApplicable only) |
+| `verify.build` | the compile/test gate → `{ passed, issues, summary }` | referenced `verify.cargo.cwd` |
+
+The Tier-1 flow selects an extension by the target repo's `language` input (default `rust`) and dispatches to its seam — it never names `cargo`. **Why not StructureOS for Tier-1 detection:** StructureOS's `SOS027` (unused_imports) requires the rustc-lint cross-check, which is suppressed/empty by default (`SOS-RUSTC-OFF`) — verified unreliable during Task-1 dogfooding. The compiler is the deterministic source of truth for a "compiler-driven, no judgment" tier (§8). StructureOS remains the language-neutral structural source for Tiers 2–3.
+
+**v1 ships only the Rust extension.** Adding TypeScript (`eslint --fix` + `verify.ui.green`) or Python (`ruff --fix`) is a new extension file implementing the same three seam capabilities — zero change to the campaign core.
 
 ## 6. Unit inventory (v1)
 
@@ -79,15 +94,15 @@ Shipped as `taxonomy.finding-tiers.yaml`, read by the flows. Re-tiering is a tab
 
 ## 7. Architecture
 
-**Tier 1 — `flow.findings.sweep-safe`** (deterministic, agent-free, one batch PR):
+**Tier 1 — `flow.findings.sweep-safe`** (deterministic, agent-free, language-extension-driven, one batch PR):
 ```
-collecting ─ get_diagnostics {SOS027} ─▶ gate_empty
-  (none → done) │ (some → fixing)
-fixing   ─ deterministic `cargo fix` (unused imports; NO agent) ─▶
-building ─ verify.cargo.cwd (fmt + clippy -D warnings + test) ─▶ build_gate
-  (green → reporting → done+branch) │ (red → needs_human)   ← cargo fix should never red; a red is a real signal
+probing  ─ ext.<language>.detect.safe → {count} ─▶ gate_empty
+  (count == 0 → done) │ (count > 0 → fixing)
+fixing   ─ ext.<language>.fix.safe (deterministic; NO agent) ─▶
+building ─ ext.<language>.verify.build (Rust: verify.cargo.cwd — fmt + clippy -D warnings + test) ─▶ build_gate
+  (green → reporting → done+branch) │ (red → needs_human)   ← a deterministic fix should never red; a red is a real signal
 ```
-A red build here is not a fixup loop (there's no agent to fix) — it surfaces to `needs_human`, because a deterministic `cargo fix` breaking the build is itself a finding.
+The flow names only the seam (`detect.safe`/`fix.safe`/`verify.build`), resolved from the `language` input (§5a) — never `cargo`. A red build is not a fixup loop (there's no agent to fix) — it surfaces to `needs_human`, because a deterministic fix breaking the build is itself a finding.
 
 **Tier 2 — `flow.findings.structural`** (budgeted, stateless, per-target):
 ```
