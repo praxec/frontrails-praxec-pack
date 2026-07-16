@@ -316,12 +316,12 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Modify: `frontrails-campaign.yaml` (fill the `workflows:` map)
 
 **Interfaces:**
-- Consumes: the language seam (`ext.rust.detect-safe`, `ext.rust.fix-safe` from Task 3; `verify.cargo.cwd` referenced), and the core scripts `report.sweep-safe` + `git.commit-branch` (Task 5). **No `structureos` in the Tier-1 path** (spec §5a).
+- Consumes: the language seam (`inspect.rust.safe-findings`, `run.rust.fix-safe` from Task 3; `verify.cargo.cwd` referenced), and the core scripts `run.campaign.sweep-report` + `run.campaign.commit-branch` (Task 5). **No `structureos` in the Tier-1 path** (spec §5a). All script subjects use blessed roots (SPEC §22.4).
 - Produces: workflow `flow.findings.sweep-safe`, initialState `probing`, terminal `done`. State path: `probing → gate_empty → {done | fixing → building → build_gate → {reporting → committing → done | needs_human → done}}`.
 
 - [ ] **Step 1a: Verify whether `subject:` accepts a `$.context.*` path (seam mechanism)**
 
-Author a one-off transition with `subject: "$.context.ext_fix_safe"` and run `praxec check`. If it resolves, the orchestrator below drives the seam dynamically from `language`. If praxec requires a literal `subject:`, replace the three `"$.context.ext_*"` subjects below with their literal Rust values (`ext.rust.detect-safe`, `ext.rust.fix-safe`, `verify.cargo.cwd`) and note in the report that language selection is realized by include-swapping the extension file (still language-neutral core, static per config). Record which mechanism praxec supports.
+Author a one-off transition with `subject: "$.context.ext_fix_safe"` and run `praxec check`. If it resolves, the orchestrator below drives the seam dynamically from `language`. If praxec requires a literal `subject:`, replace the three `"$.context.ext_*"` subjects below with their literal Rust values (`inspect.rust.safe-findings`, `run.rust.fix-safe`, `verify.cargo.cwd`) and note in the report that language selection is realized by include-swapping the extension file (still language-neutral core, static per config). Record which mechanism praxec supports. NOTE: script subjects MUST use a blessed root (SPEC §22.4: build/test/verify/run/inspect/audit/… ) or `praxec check` fails with `INVALID_SCRIPT_SUBJECT_ROOT`.
 
 - [ ] **Step 1: Write the orchestrator (structural "test" is `praxec check` in Step 2)**
 
@@ -342,8 +342,9 @@ workflows:
       # v1 wires Rust. If praxec requires literal `subject:` (Step 1a), replace
       # the "$.context.ext_*" references in the states with these values.
       language: "rust"
-      ext_detect_safe: "ext.rust.detect-safe"
-      ext_fix_safe: "ext.rust.fix-safe"
+      # Blessed-root script subjects (SPEC §22.4). Conceptual seam names in §5a.
+      ext_detect_safe: "inspect.rust.safe-findings"
+      ext_fix_safe: "run.rust.fix-safe"
       ext_verify_build: "verify.cargo.cwd"
       finding_count: 0
       fixed_count: 0
@@ -423,7 +424,7 @@ workflows:
             actor: deterministic
             executor:
               kind: script
-              subject: report.sweep-safe
+              subject: run.campaign.sweep-report
               workingDirectory: "$.run.repo_root"
             output:
               report_path: "$.output.json.report_path"
@@ -436,7 +437,7 @@ workflows:
             actor: deterministic
             executor:
               kind: script
-              subject: git.commit-branch
+              subject: run.campaign.commit-branch
               workingDirectory: "$.run.repo_root"
             output:
               branch: "$.output.json.branch"
@@ -494,14 +495,14 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `$.context` fields set by `flow.findings.sweep-safe` (passed as argv/env by the script executor).
-- Produces: `report.sweep-safe` — writes `.praxec/reports/sweep-safe-<runid>.json`+`.md`, emits `{report_path}`. `git.commit-branch` — creates branch `campaign/sweep-safe`, commits the working tree, emits `{branch}`. Both exit 0.
+- Produces: `run.campaign.sweep-report` — writes `.praxec/reports/sweep-safe-<runid>.json`+`.md`, emits `{report_path}`. `run.campaign.commit-branch` — creates branch `campaign/sweep-safe`, commits the working tree, emits `{branch}`. Both exit 0. (Blessed root `run`, SPEC §22.4.)
 
 - [ ] **Step 1: Add the report script**
 
 Add to `scripts:` in `frontrails-campaign.yaml`:
 ```yaml
-  report.sweep-safe:
-    verb: report
+  run.campaign.sweep-report:
+    verb: run
     lifecycle: experimental
     source: frontrails-praxec-pack
     body: |
@@ -534,8 +535,8 @@ Add to `scripts:` in `frontrails-campaign.yaml`:
 
 Add to `scripts:`:
 ```yaml
-  git.commit-branch:
-    verb: coordinate
+  run.campaign.commit-branch:
+    verb: run
     lifecycle: experimental
     source: frontrails-praxec-pack
     body: |
@@ -558,8 +559,8 @@ Add to `scripts:`:
 - [ ] **Step 3: Verify both scripts' JSON contracts**
 
 Run each body manually in a scratch dir; pipe stdout to `jq -e`:
-- `report.sweep-safe` → `jq -e '.report_path|type=="string"'` → exit 0.
-- `git.commit-branch` (in a scratch git repo) → `jq -e '.branch|type=="string"'` → exit 0.
+- `run.campaign.sweep-report` → `jq -e '.report_path|type=="string"'` → exit 0.
+- `run.campaign.commit-branch` (in a scratch git repo) → `jq -e '.branch|type=="string"'` → exit 0.
 
 - [ ] **Step 4: Re-run the full structural check**
 
