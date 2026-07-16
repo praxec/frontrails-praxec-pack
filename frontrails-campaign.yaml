@@ -11,20 +11,25 @@ scripts:
     source: frontrails-praxec-pack
     body: |
       #!/usr/bin/env bash
-      # Per-run observability report (spec §9). Reads the campaign fields from
-      # the environment the script executor injects (PRAXEC_CTX_* mirror
-      # $.context), writes JSON + markdown under .praxec/reports/, emits the path.
+      # Per-run observability report (spec §9). The `kind: script` executor sets
+      # the process cwd to its `workingDirectory` ($.run.repo_root) and passes
+      # the run-context fields as POSITIONAL ARGS (jsonpath-templated `$.context.*`
+      # in the transition executor's `args:` — env values are NOT templated, and
+      # the only script-scoped env praxec injects is PRAXEC_SCRIPT_SUBJECT/HASH).
+      # So: argv1=finding_count, argv2=fixed_count, argv3=build_passed; cwd is
+      # already the run repo (do NOT cd off it). Writes JSON + markdown under
+      # .praxec/reports/, emits the path.
       set -uo pipefail
-      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      finding_count="${1:-0}"
+      fixed_count="${2:-0}"
+      build_passed="${3:-false}"
       dir=".praxec/reports"; mkdir -p "$dir"
-      # Fields arrive as env vars mirroring $.context (verify names against the
-      # gateway's script-env contract; fall back to 0/"" when unset).
-      finding_count="${PRAXEC_CTX_finding_count:-0}"
-      fixed_count="${PRAXEC_CTX_fixed_count:-0}"
-      build_passed="${PRAXEC_CTX_build_passed:-false}"
-      stamp="${PRAXEC_RUN_ID:-run}"
+      # No run-id is templatable into args ($.run.* exposes only repo_root), and
+      # no PRAXEC_RUN_ID env exists — stamp from the wall clock so runs don't
+      # clobber each other.
+      stamp="$(date -u +%Y%m%dT%H%M%SZ)"
       json="$dir/sweep-safe-$stamp.json"
-      printf '{"tier":1,"findings_in":{"SOS027":%s},"tier1":{"fixed":%s,"gate_result":"%s"},"unknown_codes":[]}\n' \
+      printf '{"tier":1,"findings_in":{"SOS027":%s},"tier1":{"fixed":%s,"gate_result":%s},"unknown_codes":[]}\n' \
         "$finding_count" "$fixed_count" "$build_passed" > "$json"
       {
         echo "# Sweep-safe run $stamp"
@@ -161,6 +166,14 @@ workflows:
               kind: script
               subject: run.campaign.sweep-report
               workingDirectory: "$.run.repo_root"
+              # Pass the run context into the report as positional args. Executor
+              # args are jsonpath-templated (`$.context.*`), unlike `env:` — so
+              # argv1=finding_count, argv2=fixed_count, argv3=build_passed reach
+              # the script body. workingDirectory sets cwd (not an argv slot).
+              args:
+                - "$.context.finding_count"
+                - "$.context.fixed_count"
+                - "$.context.build_passed"
             output:
               report_path: "$.output.json.report_path"
 
