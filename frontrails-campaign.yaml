@@ -1,0 +1,9 @@
+# frontrails-campaign.yaml
+# Additive campaign layer — deep-merges alongside frontrails.yaml (maps merge,
+# scalars: later wins). Declares the StructureOS findings-cleanup flows + their
+# scripts. No praxec.repo.yaml migration (spec §2).
+version: "1.0.0"
+
+scripts: {}      # filled in Tasks 3 and 5
+
+workflows: {}    # filled in Task 4

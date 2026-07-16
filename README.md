@@ -146,6 +146,23 @@ missing server binaries are fine at validation time.
   workflow docs; confirm against each server's live `action` discriminator.
 - **E2E fixture not yet populated** — see `tests/fixtures/spec-with-diagnostic/`.
 
+## Campaign wiring (StructureOS findings cleanup)
+
+The findings-cleanup campaign ships as an **additive** `frontrails-campaign.yaml`
+that deep-merges alongside `frontrails.yaml`. Consumers include both, plus the
+base `cognitive-architectures` repo (for `verify.cargo.cwd`) and — for Tier 2 —
+`cognitive-architectures-max` (for `flow.refactor.god-file`):
+
+```yaml
+include:
+  - <frontrails-praxec-pack>/frontrails.yaml
+  - <frontrails-praxec-pack>/frontrails-campaign.yaml
+  - <cognitive-architectures>/scripts-library/verify.cargo.cwd.yaml
+```
+
+The campaign runs against the consumer repo via `$.run.repo_root` (praxec
+run-ambient). See `docs/superpowers/specs/2026-07-16-structureos-findings-campaign-design.md`.
+
 ## Tests
 
 See `tests/README.md` for the manual / CI-gated E2E. Its acceptance includes
