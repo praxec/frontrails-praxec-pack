@@ -4,6 +4,54 @@
 # scripts. No praxec.repo.yaml migration (spec §2).
 version: "1.0.0"
 
-scripts: {}      # filled in Tasks 3 and 5
+scripts:
+  run.campaign.sweep-report:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Per-run observability report (spec §9). Reads the campaign fields from
+      # the environment the script executor injects (PRAXEC_CTX_* mirror
+      # $.context), writes JSON + markdown under .praxec/reports/, emits the path.
+      set -uo pipefail
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      dir=".praxec/reports"; mkdir -p "$dir"
+      # Fields arrive as env vars mirroring $.context (verify names against the
+      # gateway's script-env contract; fall back to 0/"" when unset).
+      finding_count="${PRAXEC_CTX_finding_count:-0}"
+      fixed_count="${PRAXEC_CTX_fixed_count:-0}"
+      build_passed="${PRAXEC_CTX_build_passed:-false}"
+      stamp="${PRAXEC_RUN_ID:-run}"
+      json="$dir/sweep-safe-$stamp.json"
+      printf '{"tier":1,"findings_in":{"SOS027":%s},"tier1":{"fixed":%s,"gate_result":"%s"},"unknown_codes":[]}\n' \
+        "$finding_count" "$fixed_count" "$build_passed" > "$json"
+      {
+        echo "# Sweep-safe run $stamp"
+        echo "- SOS027 findings in: $finding_count"
+        echo "- fixed: $fixed_count"
+        echo "- build gate: $build_passed"
+      } > "$dir/sweep-safe-$stamp.md"
+      printf '{"report_path": %s}\n' "$(printf '%s' "$json" | jq -Rs .)"
+
+  run.campaign.commit-branch:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Commit the working-tree fixes on a campaign branch; a human/CI opens the
+      # PR (spec §10 — no cap.coordinate.pr-open in v1). Exit 0 always.
+      set -uo pipefail
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      branch="campaign/sweep-safe"
+      git checkout -b "$branch" 2>/dev/null || git checkout "$branch"
+      git add -A
+      if git diff --cached --quiet; then
+        printf '{"branch": %s, "committed": false}\n' "$(printf '%s' "$branch" | jq -Rs .)"
+      else
+        git commit -m "chore(campaign): sweep unused imports (SOS027) via cargo fix" >/dev/null
+        printf '{"branch": %s, "committed": true}\n' "$(printf '%s' "$branch" | jq -Rs .)"
+      fi
 
 workflows: {}    # filled in Task 4
