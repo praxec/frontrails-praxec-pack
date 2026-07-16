@@ -1,3 +1,37 @@
 version: "1.0.0"
 
-scripts: {}
+scripts:
+  # Blessed script roots (SPEC §22.4). Conceptual seam = detect.safe (spec §5a).
+  inspect.rust.safe-findings:
+    verb: inspect
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # detect.safe (Rust): count unused-import warnings. Emits {count}. exit 0.
+      set -uo pipefail
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      count=$(cargo build --message-format=short 2>&1 | grep -c "unused import" || true)
+      printf '{"count": %s}\n' "$count"
+
+  # Conceptual seam = fix.safe (spec §5a); blessed root `run` (SPEC §22.4).
+  run.rust.fix-safe:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # fix.safe (Rust): deterministically remove unused imports with `cargo fix`.
+      # rustfix applies ONLY MachineApplicable suggestions — compiler-verified,
+      # behavior-preserving — so no LLM, no judgment (spec §8). Emits
+      # {passed, fixed_count, before, after, summary}; exit 0 always.
+      set -uo pipefail
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      count_unused() { cargo build --message-format=short 2>&1 | grep -c "unused import" || true; }
+      before=$(count_unused)
+      log=$(cargo fix --allow-dirty --allow-staged --lib --bins --tests 2>&1) && passed=true || passed=false
+      after=$(count_unused)
+      fixed=$(( before - after )); [ "$fixed" -lt 0 ] && fixed=0
+      summary=$(printf '%s' "$log" | tail -c 1500 | jq -Rs . 2>/dev/null || printf '""')
+      printf '{"passed": %s, "fixed_count": %s, "before": %s, "after": %s, "summary": %s}\n' \
+        "$passed" "$fixed" "$before" "$after" "$summary"
