@@ -7,9 +7,13 @@
 # docs/superpowers/specs/2026-07-17-praxec-coordination-foundation-design.md:
 # a findings producer (uxos) hands an opaque list of findings to the reusable
 # `flow.intent.propose_and_park` tail (frontrails-coordination.yaml, Task 3),
-# which grounds them against a real IntentOS spec and parks a durable
-# approval ticket — never applying, never self-approving. Task 5 drives this
-# config live end-to-end; this task only proves it resolves at `check`.
+# which grounds them against a real IntentOS spec and records the outcome —
+# a propose either applies directly (`approved`), parks a durable approval
+# ticket (`pending_approval`), or opens a gate review (`needs_review`); which
+# one depends on config + gate impact, never on the seam being correct (see the
+# design spec §4.2 / the E2E doc's "Live result"). The tail never self-approves.
+# Task 5 drives this config live end-to-end; this task only proves it resolves
+# at `check`.
 # ============================================================================
 #
 # Theme (hard constraint — see tests/fixtures/ux-capture/index.html and
@@ -30,9 +34,10 @@ workflows:
       Audit the CI-cost-controls fixture capture with uxos, record the one
       operable-name finding it raises as `audit_findings`, then hand that
       list to the reusable `flow.intent.propose_and_park` tail so it lands
-      as a real, grounded, parked IntentOS proposal against the
-      tests/fixtures/intent-spec fixture. Proves the uxos -> propose_and_park
-      seam; does not itself run live (Task 5).
+      as a real, grounded IntentOS change — accepted either as an applied
+      change or a parked ticket — against the tests/fixtures/intent-spec
+      fixture. Proves the uxos -> propose_and_park seam; does not itself run
+      live (Task 5).
     inputs:
       audit_findings:
         type: array
@@ -78,7 +83,7 @@ workflows:
               audit_findings: "$.arguments.audit_findings"
           advance:
             title: Hand the finding to the reusable propose+park tail
-            target: parking
+            target: reporting
             actor: agent
             executor:
               kind: workflow
@@ -89,12 +94,17 @@ workflows:
                   rationale: "uxos flagged an operable-name defect"
                 outputs:
                   "$.context.parked_tickets": parked_tickets
+                  "$.context.applied": applied
+                  "$.context.grounded_refs": grounded_refs
 
-      parking:
+      reporting:
         goal: >
-          `flow.intent.propose_and_park` has returned; `parked_tickets`
-          carries the ticket_id(s) it parked (never applied, never
-          self-approved). Report and finish.
+          `flow.intent.propose_and_park` has returned. The grounded change was
+          accepted in one of two forms: `parked_tickets` carries any ticket_id(s)
+          it parked (the hand-off path), and `applied` carries any change that
+          applied directly — exactly one is populated per change; `grounded_refs`
+          names the real entity id(s) it grounded on. The tail never
+          self-approves. Report and finish.
         transitions:
           finish:
             target: done

@@ -149,10 +149,14 @@ campaign E2E pattern — never mutating the pack or FrontRails):
   detectable UX defect (e.g. an icon-only button with no accessible name),
   yielding a real uxos a11y/tap-target finding. Feeds `uxos.extract` →
   `uxos.audit`.
-- `tests/fixtures/intent-spec/` — a minimal `.frontrails/intent/` holding a few
-  real entities (a journey + state + requirement) so `search_intent_harness`
-  returns genuine ids to ground the proposal against. Without a real grounding
-  target the proposal cannot be grounded and cannot park.
+- `tests/fixtures/intent-spec/` — a minimal spec holding a few real entities
+  (actor + product_job + requirement) so `search_intent_harness` returns genuine
+  ids to ground the proposal against. Without a real grounding target the
+  proposal cannot be grounded. **Shipped shape:** a single-file
+  `tests/fixtures/intent-spec/intentos.yaml` (not `.frontrails/intent/…`) — the
+  live `intent` binary writes a single-file spec at the spec root and treats
+  `.frontrails/intent/` as its own regenerable cache (which the pack `.gitignore`
+  ignores anyway). See the E2E doc's "Fixture shape note".
 
 **Validating consumer** — `examples/ux_vet_fix_min.yaml`, a minimal composition
 **clearly labeled a foundation proof, not sub-project C**: `uxos.audit`
