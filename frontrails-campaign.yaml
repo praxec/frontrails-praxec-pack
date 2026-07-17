@@ -95,14 +95,29 @@ scripts:
       # (mirrors `kind: script`'s own stdout->`.output.json` convenience,
       # which `kind: mcp` lacks). Also defends the zero-god-file edge: when no
       # god file exists, StructureOS omits `_summary.by_id.SOS001` entirely
-      # (not 0) and `focus` is `null` — jq's `// 0` / `// empty` default both
-      # to a safe zero/empty so `picking`'s `== 0` guard actually matches
-      # instead of comparing against null forever. exit 0 always (a parse
-      # failure defaults to "no god files" rather than wedging the flow).
+      # (not 0) — jq's `// 0` / `// empty` default to a safe zero/empty so
+      # `picking`'s `== 0` guard actually matches instead of comparing against
+      # null forever. exit 0 always (a parse failure defaults to "no god
+      # files" rather than wedging the flow).
+      #
+      # worst_path bind (T2.5 whole-branch review fix, source-verified):
+      # take it from `._summary.worst_files[0].path`, NOT `.focus.items[0]`.
+      # `focus` is the FIRST category in StructureOS's PRIORITY_ORDER with
+      # count>0, and that order is ParseErrors(SOS400) -> GodFiles(SOS001) ->
+      # ... (structureos-contract/src/action_digest.rs) — so
+      # `focus.category == god_files` ONLY when the repo has no parse errors.
+      # On a real repo with parse errors alongside god-files, `god_file_count`
+      # (from `_summary.by_id.SOS001`) is still >0 so `picking` correctly
+      # routes to `refactor`, but `focus.items[0].node_id` would resolve to a
+      # PARSE-ERROR node -> the god-file flow would be dispatched against the
+      # wrong file. `_summary.worst_files` is category-independent and sorted
+      # by `god_file_score` desc (router_summary.rs `build_worst_files`,
+      # filtered to score>0.5), so `worst_files[0].path` is always the worst
+      # god-file whenever SOS001>0, and empty when none exist.
       set -uo pipefail
       scan_text="${1:-}"
       god_file_count="$(printf '%s' "$scan_text" | jq -r '._summary.by_id.SOS001 // 0' 2>/dev/null || echo 0)"
-      worst_path="$(printf '%s' "$scan_text" | jq -r '.focus.items[0].node_id // empty' 2>/dev/null || true)"
+      worst_path="$(printf '%s' "$scan_text" | jq -r '._summary.worst_files[0].path // empty' 2>/dev/null || true)"
       jq -n --argjson god_file_count "${god_file_count:-0}" --arg worst_path "${worst_path:-}" \
         '{god_file_count: $god_file_count, worst_path: $worst_path}'
 
@@ -413,10 +428,10 @@ workflows:
               # (`CHAIN_FAILED`/`permanent_error`: "failed to start sub-workflow:
               # workflow definition '...' not found"). So the literal string
               # below is the one empirically confirmed to resolve AND execute
-              # against this repo's check config — see task-4-report.md for the
-              # full investigation. A real multi-repo consumer following the
-              # README's `repos:`-mounting instructions would need the prefixed
-              # form instead; reconciling the two is flagged as an open concern.
+              # against this repo's check config. A real multi-repo consumer
+              # following the README's `repos:`-mounting instructions would
+              # need the prefixed form instead; reconciling the two is flagged
+              # as an open concern.
               definitionId: flow.refactor.god-file
               use:
                 inputs:

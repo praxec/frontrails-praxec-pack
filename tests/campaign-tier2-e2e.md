@@ -68,9 +68,9 @@ re-proven here.
    Adding a `repos:` entry here is ONLY for `$WORK` (the throwaway fixture) —
    it does not change how `cognitive-architectures-max` resolves (it is still
    raw-`include`d, so `flow.refactor.god-file` stays unprefixed; see
-   `frontrails-campaign.yaml`'s `refactoring` state comment / `task-4-report.md`
-   for why the prefixed `cognitive-max/flow.refactor.god-file` form is NOT the
-   one actually loaded here).
+   `frontrails-campaign.yaml`'s `refactoring` state comment for why the
+   prefixed `cognitive-max/flow.refactor.god-file` form is NOT the one
+   actually loaded here).
 
    ```bash
    praxec check --config /abs/path/to/throwaway/e2e-gateway.yaml   # exit 0
@@ -193,14 +193,66 @@ auto-JSON-parsed into `$.output.json.*` — `kind: mcp` has no equivalent.)
 - **New state `extracting`** runs a **new script**,
   `run.campaign.extract-godfile-summary` (blessed `run.` root, SPEC §22.4),
   which takes `scan_text` as `argv1`, uses `jq` to pull
-  `._summary.by_id.SOS001 // 0` and `.focus.items[0].node_id // empty`
+  `._summary.by_id.SOS001 // 0` and `._summary.worst_files[0].path // empty`
   (both defaulting safely when absent/null — this is where Defect 1 is
   actually closed), and prints `{"god_file_count": N, "worst_path": "..."}`
   to stdout — auto-parsed by the script executor into `$.output.json.*`,
   which `extracting`'s `output:` then binds to `god_file_count` / `worst_path`.
   `extracting`'s `extract` transition targets `picking` (unchanged from there
   on).
-- A **third, independent** defect surfaced while proving Run 2 (budget:0):
+
+### Defect 3 (whole-branch review, source-verified): worst_path must come from `worst_files`, not `focus`
+
+An earlier draft of `extracting` bound `worst_path` from
+`.focus.items[0].node_id`. That is wrong on a real repo. `focus` is the
+FIRST category in StructureOS's `PRIORITY_ORDER` with a non-zero count, and
+that order is `ParseErrors(SOS400) -> GodFiles(SOS001) -> ...`
+(`structureos-contract/src/action_digest.rs`). So `focus.category ==
+god_files` ONLY when the repo has NO parse errors. On a repo with parse
+errors alongside god-files, `god_file_count` (from `_summary.by_id.SOS001`)
+is still > 0 so `picking` correctly routes to `refactor` — but
+`focus.items[0].node_id` would resolve to a PARSE-ERROR node, dispatching
+the god-file flow against the wrong file. The fixtures here hid this (each
+has only god-files or no findings, so `focus` is always `god_files`/`null`).
+**Fix:** bind `worst_path` from `._summary.worst_files[0].path` instead —
+that array is category-independent and sorted by `god_file_score`
+descending (`router_summary.rs` `build_worst_files`, filtered to
+score > 0.5), so `worst_files[0].path` is the worst god-file whenever
+SOS001 > 0, and empty when none exist. Both bindings agree when only
+god-files are present (why all three E2E runs still pass), but only the
+`worst_files` binding is correct once parse errors coexist.
+(An extra `worst_path == ""` guard on `picking` was considered and
+deliberately NOT added — it risks a stuck state, and the `worst_files`
+binding makes `worst_path` reliable whenever SOS001 > 0.)
+
+**Live proof on a real repo (`frontrails-product`, 1397 files, 29 god-files).**
+A dedicated parse-error probe turned out to be infeasible: tree-sitter
+*recovers* from broken syntax (it embeds ERROR nodes and returns
+`Some(tree)`, so `parse_ok` stays `true` — `scan/mod.rs` DOC-002 comment +
+`parse_by_language`), so `parse_ok = false` — the ONLY trigger for SOS400 —
+fires only when the parser returns `None` (no parser / timeout), never on
+ordinary bad Rust. Confirmed empirically twice: a throwaway god-file crate
+with a deliberately-broken `.rs` file still reported
+`_summary.by_id` WITHOUT `SOS400` and `focus.category == "god_files"`; and a
+full scan of `frontrails-product` reported `parse_error_count: 0` /
+`parse_success_ratio: 1.0` across all 1397 files. So the parse-error branch
+of this defect rests on the source-verified `PRIORITY_ORDER` reasoning
+above, not a live repro.
+
+BUT the same real scan proved the fix matters even with ZERO parse errors:
+with `focus.category == "god_files"`, the two bindings still resolve to
+DIFFERENT files —
+`_summary.worst_files[0].path == "crates/structureos-runtime/src/refactor/pipeline/tests/mod.rs"`
+(god_file_score **2.76**, the true worst by score) versus
+`focus.items[0].node_id == "crates/structureos-runtime/src/scan/mod.rs"`
+(god_file_score **1.83**). `focus.items` is ranked/filtered by the server's
+own presentation logic (it foregrounds the non-test decomposition target),
+NOT strictly by `god_file_score`, so the old binding would have dispatched
+the god-file flow against a lower-scored file than the plan-blessed
+"worst". `_summary.worst_files[0].path` is the category-independent,
+score-sorted field, so it is correct in BOTH the parse-error case (verified
+by source) and the divergent-ranking case (verified live).
+- A **fourth, independent** defect surfaced while proving Run 2 (budget:0):
   `initialContext` used to hardcode a literal `budget: 3`. praxec's
   input→context seeding (`runtime.rs`, `ctx.entry(k).or_insert(...)`) only
   fills a context slot from the caller's `input` when `initialContext` does
