@@ -163,6 +163,27 @@ include:
 The campaign runs against the consumer repo via `$.run.repo_root` (praxec
 run-ambient). See `docs/superpowers/specs/2026-07-16-structureos-findings-campaign-design.md`.
 
+### Tier 2 (structural) additional wiring
+
+`flow.findings.structural` references the god-file decomposition flow by the id
+`flow.refactor.god-file`, so the consumer gateway must also load that flow and
+have a **coding agent** wired — the god-file flow's `fixing` state is
+`actor: agent` (Tier 2 is therefore not agent-free; Tier 1 is).
+
+**Note on the referenced id.** The id you write depends on how the flow is
+mounted:
+- **`include:` (flat merge, this pack's convention)** — add the flow file to
+  your `include:` list; it merges as a top-level workflow, so reference it
+  **unprefixed** as `flow.refactor.god-file` (see `examples/campaign-check.yaml`).
+- **`repos:` mount (namespaced)** — if you instead mount
+  `cognitive-architectures-max` as a repo, reference it **prefixed** as
+  `cognitive-max/flow.refactor.god-file`.
+
+The shipped flow uses the unprefixed form to match this pack's `include:`-based
+config. **Caveat:** `praxec check`/`fuzz` do NOT validate `kind: workflow`
+`definitionId` resolution, so a wrong id fails only at dispatch time — keep the
+id form consistent with your mount mode.
+
 ## Tests
 
 See `tests/README.md` for the manual / CI-gated E2E. Its acceptance includes
