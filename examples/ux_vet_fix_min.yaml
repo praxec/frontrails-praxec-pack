@@ -1,0 +1,105 @@
+# examples/ux_vet_fix_min.yaml
+#
+# ============================================================================
+# FOUNDATION E2E PROOF (Task 4 of the praxec coordination-foundation plan) —
+# NOT sub-project C's full campaign. This is the minimal, self-contained
+# consumer that proves the seam described in
+# docs/superpowers/specs/2026-07-17-praxec-coordination-foundation-design.md:
+# a findings producer (uxos) hands an opaque list of findings to the reusable
+# `flow.intent.propose_and_park` tail (frontrails-coordination.yaml, Task 3),
+# which grounds them against a real IntentOS spec and parks a durable
+# approval ticket — never applying, never self-approving. Task 5 drives this
+# config live end-to-end; this task only proves it resolves at `check`.
+# ============================================================================
+#
+# Theme (hard constraint — see tests/fixtures/ux-capture/index.html and
+# tests/fixtures/intent-spec/intentos.yaml): the user of this fixture is a
+# cost-conscious DEVELOPER managing CI/build spend, the real persona of a
+# developer-tooling product. This is NOT a shopper/checkout/cart scenario and
+# there is no actor.shopper anywhere in this pack.
+include:
+  - ../frontrails.yaml
+  - ../frontrails-coordination.yaml
+
+version: "1.0.0"
+
+workflows:
+  ux_vet_fix_min:
+    lifecycle: experimental
+    description: >
+      Audit the CI-cost-controls fixture capture with uxos, record the one
+      operable-name finding it raises as `audit_findings`, then hand that
+      list to the reusable `flow.intent.propose_and_park` tail so it lands
+      as a real, grounded, parked IntentOS proposal against the
+      tests/fixtures/intent-spec fixture. Proves the uxos -> propose_and_park
+      seam; does not itself run live (Task 5).
+    inputs:
+      audit_findings:
+        type: array
+        required: false
+        default: []
+    initialState: assessing
+    initialContext:
+      audit_findings: []
+    maxChainDepth: 20
+    states:
+
+      assessing:
+        goal: >
+          Extract a UX-IR from tests/fixtures/ux-capture/index.html (pass its
+          contents as the `html` argument to `extract`), then `audit` the
+          resulting IR. uxos will flag the icon-only button
+          (`control_button_unnamed`) as missing an accessible name — a
+          semantic-a11y gate blocker. Turn that one finding into a
+          `source_findings`-shaped element (a `target_hint` describing the
+          defect, e.g. "operable control has no accessible name") and record
+          it as `audit_findings` via `record`, then `advance` to hand it to
+          the reusable propose+park tail.
+        transitions:
+          extract:
+            target: assessing
+            actor: agent
+            executor: { capability: uxos.extract }
+          audit:
+            target: assessing
+            actor: agent
+            executor: { capability: uxos.audit }
+          record:
+            title: Persist the one audit finding as audit_findings
+            target: assessing
+            actor: agent
+            inputSchema:
+              type: object
+              required: [audit_findings]
+              properties:
+                audit_findings: { type: array }
+            executor: { kind: noop }
+            output:
+              audit_findings: "$.arguments.audit_findings"
+          advance:
+            title: Hand the finding to the reusable propose+park tail
+            target: parking
+            actor: agent
+            executor:
+              kind: workflow
+              definitionId: flow.intent.propose_and_park
+              use:
+                inputs:
+                  source_findings: "$.context.audit_findings"
+                  rationale: "uxos flagged an operable-name defect"
+                outputs:
+                  "$.context.parked_tickets": parked_tickets
+
+      parking:
+        goal: >
+          `flow.intent.propose_and_park` has returned; `parked_tickets`
+          carries the ticket_id(s) it parked (never applied, never
+          self-approved). Report and finish.
+        transitions:
+          finish:
+            target: done
+            actor: agent
+            executor: { kind: noop }
+
+      done:
+        terminal: true
