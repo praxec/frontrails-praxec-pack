@@ -163,6 +163,13 @@ include:
 The campaign runs against the consumer repo via `$.run.repo_root` (praxec
 run-ambient). See `docs/superpowers/specs/2026-07-16-structureos-findings-campaign-design.md`.
 
+### Tier 2 (structural) additional wiring
+
+`flow.findings.structural` references `cognitive-max/flow.refactor.god-file`, so the
+consumer gateway must also load `cognitive-architectures-max` (the flow) and have a
+**coding agent** wired — the god-file flow's `fixing` state is `actor: agent`.
+Tier 2 is therefore not agent-free (Tier 1 is).
+
 ## Tests
 
 See `tests/README.md` for the manual / CI-gated E2E. Its acceptance includes
