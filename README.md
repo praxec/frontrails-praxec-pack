@@ -1,8 +1,8 @@
 # frontrails-praxec-pack
 
 A Praxec **pattern pack** that exposes the FrontRails
-MCP servers — **IntentOS**, **StructureOS**, and **SecurityOS** — as Praxec
-capabilities.
+MCP servers — **IntentOS**, **StructureOS**, **SecurityOS**, and **uxos** — as
+Praxec capabilities.
 
 The pack is pure Praxec **configuration**. FrontRails itself is **never
 modified**: its MCP servers are spawned as Praxec `connections`, and each of
@@ -13,10 +13,16 @@ stay authoritative.**
 
 ## What's in the box
 
-Each FrontRails server exposes ONE MCP tool (`intentos` / `structureos` /
-`securityos`) that takes an `action` discriminator + `params`. So each action
-becomes its own Praxec capability: it calls the one tool with a fixed
-`action` and templates the caller's `params` in via `$.arguments.params`.
+All four `*os` servers each expose ONE MCP tool (`intentos` / `structureos` /
+`securityos` / `uxos`) that takes an `action` discriminator + `params`, so each
+action becomes its own Praxec capability (fixed `action` + templated
+`$.arguments.params`).
+
+Bindings use `map:` — **not** `arguments:`. The `mcp` executor reads only
+`connection` + `tool` + `map`; an `arguments:` block is silently ignored, and
+without a `map:` the caller's raw args pass straight through, so the pinned
+`action` never reaches the tool. `map:` resolves recursively, which is what lets
+a capability assemble a nested `params: { … }` from literals and `$.` paths.
 
 - **Individual capabilities** (one per action), each exposed via `proxy.expose`
   with tags + aliases for discovery:
@@ -26,6 +32,19 @@ becomes its own Praxec capability: it calls the one tool with a fixed
   - StructureOS: `structureos.scan_repo`, `structureos.get_diagnostics`,
     `structureos.move`
   - SecurityOS: `securityos.scan`
+  - uxos: `uxos.extract`, `uxos.conform`, `uxos.scan_dark_patterns`,
+    `uxos.audit`, `uxos.check_coverage`, `uxos.compare` — the `uxos` tool's
+    actions, each templating the inline `ir` document (or raw `html` /
+    `a11y_tree` for extract). Every uxos verb is **read-only** — it evaluates a
+    UX model, never mutates a spec — so none is gated. These are CONFORMANCE
+    verbs, not intentos clones: intentos authors *what* a step needs; uxos
+    computes *how understandable/operable* the realization is (verdicts carry a
+    deterministic-vs-advisory epistemic class).
+- **`frontrails_ux_conformance`** — assess a real surface with uxos: from a raw
+  capture (`extract`) to the one-shot `audit` (conformance + the modality-neutral
+  completeness ladder + structural dark patterns), drilling into `dark_patterns`
+  / `conform` / `ux_coverage` as needed. Read-only: it computes and reports,
+  never mutates.
 - **`frontrails_spec`** — a thin, hint-driven sub-workflow. Its agent-actor
   transitions *are* the exposed IntentOS capabilities; the running LLM picks
   each one and follows IntentOS' own HATEOAS hints. No journey logic is
@@ -126,6 +145,23 @@ missing server binaries are fine at validation time.
   `scan_repo` / `get_diagnostics` / `move` / `scan` are taken from the
   workflow docs; confirm against each server's live `action` discriminator.
 - **E2E fixture not yet populated** — see `tests/fixtures/spec-with-diagnostic/`.
+
+## Campaign wiring (StructureOS findings cleanup)
+
+The findings-cleanup campaign ships as an **additive** `frontrails-campaign.yaml`
+that deep-merges alongside `frontrails.yaml`. Consumers include both, plus the
+base `cognitive-architectures` repo (for `verify.cargo.cwd`) and — for Tier 2 —
+`cognitive-architectures-max` (for `flow.refactor.god-file`):
+
+```yaml
+include:
+  - <frontrails-praxec-pack>/frontrails.yaml
+  - <frontrails-praxec-pack>/frontrails-campaign.yaml
+  - <cognitive-architectures>/scripts-library/verify.cargo.cwd.yaml
+```
+
+The campaign runs against the consumer repo via `$.run.repo_root` (praxec
+run-ambient). See `docs/superpowers/specs/2026-07-16-structureos-findings-campaign-design.md`.
 
 ## Tests
 

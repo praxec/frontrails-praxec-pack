@@ -1,0 +1,212 @@
+# frontrails-campaign.yaml
+# Additive campaign layer — deep-merges alongside frontrails.yaml (maps merge,
+# scalars: later wins). Declares the StructureOS findings-cleanup flows + their
+# scripts. No praxec.repo.yaml migration (spec §2).
+version: "1.0.0"
+
+scripts:
+  run.campaign.sweep-report:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Per-run observability report (spec §9). The `kind: script` executor sets
+      # the process cwd to its `workingDirectory` ($.run.repo_root) and passes
+      # the run-context fields as POSITIONAL ARGS (jsonpath-templated `$.context.*`
+      # in the transition executor's `args:` — env values are NOT templated, and
+      # the only script-scoped env praxec injects is PRAXEC_SCRIPT_SUBJECT/HASH).
+      # So: argv1=finding_count, argv2=fixed_count, argv3=build_passed; cwd is
+      # already the run repo (do NOT cd off it). Writes JSON + markdown under
+      # .praxec/reports/, emits the path.
+      set -uo pipefail
+      finding_count="${1:-0}"
+      fixed_count="${2:-0}"
+      build_passed="${3:-false}"
+      dir=".praxec/reports"; mkdir -p "$dir"
+      # No run-id is templatable into args ($.run.* exposes only repo_root), and
+      # no PRAXEC_RUN_ID env exists — stamp from the wall clock so runs don't
+      # clobber each other.
+      stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+      json="$dir/sweep-safe-$stamp.json"
+      printf '{"tier":1,"findings_in":{"SOS027":%s},"tier1":{"fixed":%s,"gate_result":%s},"unknown_codes":[]}\n' \
+        "$finding_count" "$fixed_count" "$build_passed" > "$json"
+      {
+        echo "# Sweep-safe run $stamp"
+        echo "- SOS027 findings in: $finding_count"
+        echo "- fixed: $fixed_count"
+        echo "- build gate: $build_passed"
+      } > "$dir/sweep-safe-$stamp.md"
+      printf '{"report_path": %s}\n' "$(printf '%s' "$json" | jq -Rs .)"
+
+  run.campaign.commit-branch:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Commit the working-tree fixes on a campaign branch; a human/CI opens the
+      # PR (spec §10 — no cap.coordinate.pr-open in v1). Exit 0 always.
+      set -uo pipefail
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      branch="campaign/sweep-safe"
+      git checkout -b "$branch" 2>/dev/null || git checkout "$branch"
+      git add -A
+      if git diff --cached --quiet; then
+        printf '{"branch": %s, "committed": false}\n' "$(printf '%s' "$branch" | jq -Rs .)"
+      else
+        git commit -m "chore(campaign): sweep unused imports (SOS027) via cargo fix" >/dev/null
+        printf '{"branch": %s, "committed": true}\n' "$(printf '%s' "$branch" | jq -Rs .)"
+      fi
+
+workflows:
+  flow.findings.sweep-safe:
+    lifecycle: experimental
+    description: >
+      Tier 1 — deterministic, agent-free removal of unused-import findings
+      (SOS027) via cargo fix, gated by a cargo build. Commits a branch; a human
+      opens the PR. A red build surfaces to needs_human — a deterministic fix
+      producing a red build is itself a finding.
+    initialState: probing
+    initialContext:
+      # Language-extension seam (spec §5a): conceptually detect.safe / fix.safe
+      # / verify.build, resolved from `language`. Step 1a (this task) empirically
+      # confirmed praxec's script executor does NOT resolve a `$.context.*` path
+      # for `subject:` — `praxec fuzz` fails with
+      # "EngineError: start failed: subject 'context.ext_detect_safe' is
+      # unresolved" even though `praxec check` accepts it (check does not
+      # validate subject resolution at all). So the states below bind the three
+      # seam scripts via LITERAL subjects; language selection for v1+ is
+      # realized by swapping which extension file is `include`d (e.g.
+      # extensions/rust.yaml), not by dynamic context lookup. These ext_* fields
+      # are kept as documentation of the seam's conceptual names, not live
+      # bindings.
+      language: "rust"
+      # Blessed-root script subjects (SPEC §22.4). Conceptual seam names in §5a.
+      ext_detect_safe: "inspect.rust.safe-findings"
+      ext_fix_safe: "run.rust.fix-safe"
+      ext_verify_build: "verify.cargo.cwd"
+      finding_count: 0
+      fixed_count: 0
+      build_passed: false
+      build_summary: ""
+      build_issues: ""
+    states:
+
+      probing:
+        goal: Detect safe auto-fixable findings via the language extension (detect.safe).
+        transitions:
+          probe:
+            target: gate_empty
+            actor: deterministic
+            executor:
+              kind: script
+              subject: inspect.rust.safe-findings
+              workingDirectory: "$.run.repo_root"
+            output:
+              finding_count: "$.output.json.count"
+
+      gate_empty:
+        transitions:
+          none:
+            target: done
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.finding_count == 0" } ]
+          some:
+            target: fixing
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.finding_count > 0" } ]
+
+      fixing:
+        goal: Apply the deterministic fix via the language extension (fix.safe; NO agent).
+        transitions:
+          fix:
+            target: building
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.rust.fix-safe
+              workingDirectory: "$.run.repo_root"
+            output:
+              fixed_count: "$.output.json.fixed_count"
+
+      building:
+        goal: Build/test gate via the language extension (verify.build) — the real acceptance test.
+        transitions:
+          build:
+            target: build_gate
+            actor: deterministic
+            executor:
+              kind: script
+              subject: verify.cargo.cwd
+              workingDirectory: "$.run.repo_root"
+            output:
+              build_passed: "$.output.json.passed"
+              build_summary: "$.output.json.summary"
+              build_issues: "$.output.json.issues"
+
+      build_gate:
+        transitions:
+          accept:
+            target: reporting
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.build_passed == true" } ]
+          reject:
+            target: needs_human
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.build_passed == false" } ]
+
+      reporting:
+        goal: Emit the per-run observability report.
+        transitions:
+          report:
+            target: committing
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.sweep-report
+              workingDirectory: "$.run.repo_root"
+              # Pass the run context into the report as positional args. Executor
+              # args are jsonpath-templated (`$.context.*`), unlike `env:` — so
+              # argv1=finding_count, argv2=fixed_count, argv3=build_passed reach
+              # the script body. workingDirectory sets cwd (not an argv slot).
+              args:
+                - "$.context.finding_count"
+                - "$.context.fixed_count"
+                - "$.context.build_passed"
+            output:
+              report_path: "$.output.json.report_path"
+
+      committing:
+        goal: Commit the fixes on a branch; a human/CI opens the PR.
+        transitions:
+          commit:
+            target: done
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.commit-branch
+              workingDirectory: "$.run.repo_root"
+            output:
+              branch: "$.output.json.branch"
+
+      needs_human:
+        goal: >
+          The deterministic fix broke the build — a compiler-verified fix
+          producing a red build is itself a finding. Review $.context.build_issues
+          and decide.
+        transitions:
+          review:
+            target: done
+            actor: human
+            inputSchema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string }
+            executor: { kind: noop }
+            output:
+              decision: "$.arguments.decision"
+
+      done:
+        terminal: true
