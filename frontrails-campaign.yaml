@@ -233,3 +233,167 @@ workflows:
 
       done:
         terminal: true
+
+  flow.findings.structural:
+    lifecycle: experimental
+    description: >
+      Tier 2 — budgeted, stateless, per-target god-file decomposition. Scans via
+      StructureOS, picks the worst god-file (SOS001), and dispatches it to the
+      proven cognitive-max/flow.refactor.god-file (human-gated + agent fixup).
+      Processes at most `budget` targets per run; residual god-files land in
+      `paused` (re-run to continue). NOT agent-free — the referenced flow uses a
+      coding agent.
+    inputs:
+      budget: { type: integer, required: false }
+      # NOT a real caller input — `worst_path` is computed at runtime by
+      # `scanning` (a `kind: mcp` executor's plain `output:` map). It must
+      # still be declared here: praxec's V13 slot-table check only treats a
+      # `$.context.*` path referenced via `use:.inputs` as reachable when it
+      # is either declared in `inputs:` or written by another `kind: workflow`
+      # transition's `use:.outputs:` — a `kind: mcp`/`kind: script` executor's
+      # `output:` write (like scanning's) is invisible to that static check.
+      # Declaring it here (required: false, no caller ever sets it in
+      # practice) is the sanctioned way to register an internally-computed
+      # slot so `refactoring`'s `use: { inputs: { target_path:
+      # "$.context.worst_path" } }` passes V13 (SPEC §7.3). `initialContext`
+      # below wins over any input-seeding default, so this is inert at runtime.
+      worst_path: { type: string, required: false }
+    initialState: scanning
+    initialContext:
+      act_scan: "scan_repo"
+      empty_params: {}
+      budget: 3
+      targets_done: 0
+      god_file_count: 0
+      worst_path: ""
+    states:
+
+      scanning:
+        goal: Refresh the structural model (StructureOS) so god-file selection is current.
+        transitions:
+          scan:
+            target: picking
+            actor: deterministic
+            executor:
+              kind: mcp
+              connection: structureos
+              tool: structureos
+              map:
+                action: "$.context.act_scan"
+                params: "$.context.empty_params"
+            output:
+              # SOS001 count + the worst god-file. Bind worst_path to
+              # focus.items[0].node_id — RELIABLE regardless of god-file count
+              # (Task-1 finding: `_action.call.params.path` is absent when only
+              # one god-file exists; the server hands back `{id: SOS001}` there).
+              god_file_count: "$.output._summary.by_id.SOS001"
+              worst_path: "$.output.focus.items[0].node_id"
+
+      picking:
+        goal: Decide whether to refactor another god-file this run.
+        transitions:
+          none:
+            target: reporting
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.god_file_count == 0" } ]
+          budget_spent:
+            target: reporting_paused
+            actor: deterministic
+            guards:
+              - { kind: expr, expr: "$.context.god_file_count > 0" }
+              - { kind: expr, expr: "$.context.targets_done >= $.context.budget" }
+          refactor:
+            target: refactoring
+            actor: deterministic
+            guards:
+              - { kind: expr, expr: "$.context.god_file_count > 0" }
+              - { kind: expr, expr: "$.context.targets_done < $.context.budget" }
+
+      refactoring:
+        goal: Dispatch the worst god-file to the god-file decomposition flow.
+        transitions:
+          decompose:
+            target: counting
+            actor: deterministic
+            executor:
+              kind: workflow
+              # NOT "cognitive-max/flow.refactor.god-file" (the README's stated
+              # production convention, which assumes the consumer mounts
+              # cognitive-architectures-max via a `repos:` block, earning the
+              # namespace prefix). `examples/campaign-check.yaml` (this repo's
+              # own check harness, Task 2) instead raw-`include:`s
+              # `../../cognitive-architectures-max/orchestrators/flow.refactor.god-file.yaml`
+              # directly, so the id actually LOADED there is unprefixed —
+              # confirmed via `praxec query '{"subject":"flow.refactor.god-file"}'`
+              # (full definition, `item` populated) vs the same query for the
+              # "cognitive-max/"-prefixed form (`item: null`). Verified this
+              # matters at runtime, not just cosmetically: neither `praxec
+              # check` nor `praxec fuzz` catch a wrong/dangling `kind: workflow`
+              # `definitionId` when the config has no `repos:` block (proved by
+              # deliberately pointing this field at a nonexistent id — both
+              # stayed green); a live `praxec command` dispatch against the
+              # bogus id failed for real
+              # (`CHAIN_FAILED`/`permanent_error`: "failed to start sub-workflow:
+              # workflow definition '...' not found"). So the literal string
+              # below is the one empirically confirmed to resolve AND execute
+              # against this repo's check config — see task-4-report.md for the
+              # full investigation. A real multi-repo consumer following the
+              # README's `repos:`-mounting instructions would need the prefixed
+              # form instead; reconciling the two is flagged as an open concern.
+              definitionId: flow.refactor.god-file
+              use:
+                inputs:
+                  target_path: "$.context.worst_path"
+            output:
+              last_target: "$.context.worst_path"
+
+      counting:
+        goal: Count the processed target and re-scan for the next.
+        transitions:
+          next:
+            target: scanning
+            actor: deterministic
+            executor: { kind: noop }
+            output:
+              targets_done: { add: ["$.context.targets_done", 1] }
+
+      reporting:
+        goal: Emit the per-run structural report (all god-files cleared or none present).
+        transitions:
+          report:
+            target: done
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.structural-report
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.god_file_count"
+                - "$.context.targets_done"
+                - "$.context.budget"
+                - "$.context.god_file_count"
+            output:
+              report_path: "$.output.json.report_path"
+
+      reporting_paused:
+        goal: Emit the report noting residual god-files (budget spent).
+        transitions:
+          report:
+            target: paused
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.structural-report
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.god_file_count"
+                - "$.context.targets_done"
+                - "$.context.budget"
+                - "$.context.god_file_count"
+            output:
+              report_path: "$.output.json.report_path"
+
+      paused:
+        terminal: true
+      done:
+        terminal: true
