@@ -236,6 +236,34 @@ The flow reference is unprefixed (`include:` convention); `check`/`fuzz` do not
 validate `kind: workflow` resolution — a live `praxec command` drive does. See
 `docs/superpowers/specs/2026-07-17-praxec-coordination-foundation-design.md`.
 
+## Sub-projects B & C (built on the foundation)
+
+Two thin consumers of the coordination foundation — additive files that
+deep-merge alongside `frontrails.yaml`. Design:
+`docs/superpowers/specs/2026-07-17-operationalize-b-c-design.md`.
+
+- **B — `flow.strategy.populate-compass`** (`frontrails-strategy.yaml`): drives
+  a Preveti/Simuli run via the exposed `intentos.simulate_and_project` and reports
+  what it projected into the IntentOS OpportunityCompass. **Requires a live
+  Preveti** — set `PREVETI_BASE_URL` + `PREVETI_API_KEY` on the `intentos`
+  connection. For local dev, `sim_host` (in `~/working/simuli`) in-memory with
+  `SEED_DEMO=1` serves the REST API on `:8080` and seeds the key
+  `demo.preveti-demo-key` (see `tests/preveti-compass-e2e.md`). The
+  `compass_write` gate and the Simuli projection stay authoritative — B only
+  drives + reports.
+- **C — `flow.ux.vet-and-fix`** (`frontrails-ux.yaml`): audits a UX capture with
+  `uxos` and hands the budget-capped findings to `flow.intent.propose_and_park`
+  in one dispatch (the tail iterates the list). Records whichever outcome each
+  proposal reaches — `applied` or `parked_tickets` — honoring the three-outcomes
+  reality; never self-approves. E2E: `tests/ux-vetfix-e2e.md`.
+
+C dispatches the foundation tail, so its consumer includes
+`frontrails-coordination.yaml` too; the tail now declares its `outputs:`
+(`parked_tickets`/`applied`/`grounded_refs`) so an included consumer's
+`use.outputs` projection types under SPEC §7.2. Reference ids unprefixed
+(`include:` convention); `check`/`fuzz` don't validate `kind: workflow`
+resolution — a live drive does.
+
 ## Tests
 
 See `tests/README.md` for the manual / CI-gated E2E. Its acceptance includes

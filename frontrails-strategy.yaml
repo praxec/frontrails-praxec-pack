@@ -91,12 +91,16 @@ workflows:
 
       reporting:
         goal: >
-          Surface what the run populated. Call `status` to see the compass/gate
-          state, and `search` (search_intent_harness) filtered to compass entity
-          types (opportunity_segment / arena_frame / errc_move / actor) to list
-          the entities that now exist with `origin: simuli`. Record their ids as
-          `compass_entities` via `record`, then finish. Do not mutate — this is a
-          read-back report.
+          Surface what the run populated. The projected compass counts
+          (segments / arena_frames / errc_moves / actors) are already in the sim
+          `summary` captured as `projected_summary` — the compass entities live in
+          the OpportunityCompass (compass.yaml), NOT the intent harness, so
+          `search_intent_harness` will NOT list arena/segment/errc frames (it
+          covers harness entities). Call `status` to confirm the compass/gate
+          state, and use `search` only to surface any projected `actor` entities
+          (those DO land in the harness). Record the entity ids you can see as
+          `compass_entities` via `record`, then finish. Do not mutate — read-back
+          report; the projected counts come from `projected_summary`.
         transitions:
           status:
             target: reporting
