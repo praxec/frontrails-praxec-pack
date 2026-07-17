@@ -205,6 +205,36 @@ it with the existing include set (no edit needed).
   the gateway's own cwd. Point the scan at your repo by running the gateway from
   the repo root, or pin `connections.structureos.env.STRUCTUREOS_WORKSPACE_ROOT`
   to an absolute path (see `tests/campaign-tier3-e2e.md`).
+## Coordination foundation (source findings → IntentOS)
+
+The thin enabling layer for driving a *source* (a uxos audit finding, or a
+Preveti/Simuli strategy run) into IntentOS as a **grounded** proposal. Ships as
+an additive `frontrails-coordination.yaml` that deep-merges alongside
+`frontrails.yaml`:
+
+- **`flow.intent.propose_and_park`** — a reusable, agent-driven mutation tail
+  (`grounding → proposing → reporting`). Callers hand it `source_findings` +
+  `rationale` via `kind: workflow` + `use:` (exactly like Tier 2 references the
+  god-file flow) and read back `parked_tickets` / `applied` / `grounded_refs`.
+  It grounds each finding against the live spec (`search_intent_harness` → real
+  entity ids), proposes it grounded, and records the outcome — never
+  self-approving.
+- **`intentos.simulate_and_project`** — exposed on `frontrails.yaml` so
+  sub-project B (Preveti → compass) can drive it directly.
+- **`examples/ux_vet_fix_min.yaml`** — the validating consumer: `uxos.audit` on a
+  fixture capture → `flow.intent.propose_and_park`.
+
+**Propose has three outcomes, not one** (verified live — see
+`tests/foundation-propose-park-e2e.md`): `approved` (applies directly),
+`pending_approval` (parks a ticket — the hand-off path), or `needs_review` (a
+gate-crossing change opens a HITL review). A benign propose against a headless
+intentos with no HITL mechanism **auto-applies**; the "agent cannot self-approve"
+hand-off bites only where a HITL mechanism is active (the gateway + desktop) or
+the change crosses a gate. The flow records `applied` and `parked_tickets` alike.
+
+The flow reference is unprefixed (`include:` convention); `check`/`fuzz` do not
+validate `kind: workflow` resolution — a live `praxec command` drive does. See
+`docs/superpowers/specs/2026-07-17-praxec-coordination-foundation-design.md`.
 
 ## Tests
 
