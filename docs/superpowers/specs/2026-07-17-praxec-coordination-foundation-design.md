@@ -110,9 +110,24 @@ grounding-verification stay authoritative):**
   is skipped and reported, never fabricated.
 - `proposing` — call `intentos.propose` with the change + `grounded_in` = the
   real ids + `rationale`. On `status: pending_approval`, record the `ticket_id`
-  and continue; never block, never retry a parked change, never self-approve.
+  and continue; on `status: approved` (applied), record the change summary; never
+  block, never retry a parked change, never self-approve.
 - `reporting` — emit `parked_tickets` / `applied` / `grounded_refs` into the
   workflow context (the `use.outputs` projection) and terminate.
+
+**Propose has three outcomes, not one (verified live 2026-07-17 — do not assume
+"always parks"):** a propose resolves to `approved` (the change **applies
+directly**), `pending_approval` (**parks** a ticket — the hand-off path), or
+`needs_review` (a gate-crossing/attestation change opens a HITL review). Which
+one occurs depends on config and the change's gate impact, **not** on the seam
+being correct: a benign, non-gate-crossing propose against a headless intentos
+with **no HITL mechanism wired auto-applies** (nothing is present to gate it) —
+the "agent cannot self-approve" invariant only bites where a HITL mechanism is
+active (the gateway + desktop) or the change crosses a gate. This is why
+`use.outputs` carries **both** `parked_tickets` (park path) and `applied`
+(auto-apply path); the flow records whichever occurs. `needs_review` (gate
+crossing) can wedge headlessly on the not-yet-ticketized `review_strategy`
+(SP-B) and is out of scope for the agent-free path.
 
 `maxChainDepth` caps runaway/token burn. The transitions available are exactly
 the exposed `intentos.*` capabilities (`search_intent_harness`, `propose`,

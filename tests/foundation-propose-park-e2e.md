@@ -188,35 +188,40 @@ Do **not** add a new `product_job` or `actor` here, or the run may wedge on
      PARENT: `finish` → `done`; confirm `context.parked_tickets` contains the
      `ticket_id`.
 
-## Acceptance (three atomic assertions)
+## Acceptance — grounded change ACCEPTED (applied OR parked)
 
-1. **Parked ticket file exists:**
+**A propose has three outcomes, not one** (learned driving this E2E live —
+see "Live result" below): `applied` (the change lands directly),
+`pending_approval` (parks a ticket — the hand-off path), or `needs_review`
+(a gate-crossing/attestation change opens a HITL review). **Which one you get
+depends on config + the change's gate impact, NOT on the seam being correct:**
 
-   ```bash
-   test -n "$(find "$TMP" -path '*/approvals/*.yaml' -name "${TICKET_ID}.yaml")"
-   ```
+- A benign, non-gate-crossing propose against a bare headless `intent mcp serve`
+  (no HITL mechanism wired) is not HITL-gated, so it **auto-applies** (`status:
+  approved`) — the agent effectively self-applies because nothing is there to
+  gate it.
+- The same change through a HITL-configured context (the gateway + desktop, or a
+  gate-crossing change like adding a `product_job`) **parks** / opens a review —
+  that is where "agent can't self-approve" actually bites.
 
-   Expected: exactly one match.
+The seam's proof is therefore that a uxos finding produced a **real, grounded**
+IntentOS mutation — accepted in *either* form — not specifically a parked ticket.
+`flow.intent.propose_and_park` already records both (`applied[]` and
+`parked_tickets[]`).
 
-2. **Ticket still pending:**
+**Assertion 1 — grounded change accepted (applied or parked):** the propose
+response is either `status: "approved"` (with `approved_count >= 1`) or
+`status: "pending_approval"` (with a `ticket_id`) — not a structural/schema
+error.
 
-   ```bash
-   # PROPOSE_STATUS_JSON = the text envelope from
-   # intentos.propose_status { params: { ticket_id: "$TICKET_ID" } }
-   jq -e '.status == "pending"' <<<"$PROPOSE_STATUS_JSON"
-   ```
+**Assertion 2 — grounded in the real fixture entity:** the response's
+`grounded_in` contains a real fixture id (`req.operable-controls` /
+`actor.developer` / `job.control-build-cost`), never a fabricated one.
 
-   Expected: `true`.
-
-3. **Grounded in the real entity id:**
-
-   ```bash
-   grep -rq 'req\.operable-controls' "$TMP"/.frontrails/*/approvals/"${TICKET_ID}.yaml" \
-     "$TMP"/*/approvals/"${TICKET_ID}.yaml" 2>/dev/null
-   ```
-
-   Expected: match — the parked proposal's `grounded_in` contains
-   `req.operable-controls`, the id recorded above (not fabricated).
+**Assertion 3 (park path only) — if `pending_approval`:** the ticket file
+exists at `<state_root>/approvals/<ticket_id>.yaml` and
+`intentos.propose_status { ticket_id }` reports `status: "pending"`. (Skipped on
+the auto-apply path, where no ticket is created.)
 
 Plus the poka-yoke every task in this plan repeats:
 
@@ -225,6 +230,30 @@ git -C /home/mc/working/frontrails-product diff --stat crates/
 ```
 
 Expected: empty.
+
+## Live result (2026-07-17, driven headless)
+
+Driven against an isolated `$TMP` copy via a throwaway `intent mcp serve`
+(`INTENTOS_SPEC_ROOT=$TMP`), with `uxos` through its live MCP:
+
+- `uxos.extract` + `uxos.audit` on `ux-capture/index.html` → real `semantic-a11y`
+  gate blocker: *"control 'control_button_unnamed' has no accessibleName"*. ✅
+- `intentos.search_intent_harness` → `req.operable-controls` present. ✅
+- `intentos.propose` (a `strategic_job_workflow` under `job.control-build-cost`,
+  `grounded_in: [actor.developer, job.control-build-cost, req.operable-controls]`)
+  → `status: "approved"`, `approved_count: 1` — **applied, not parked** (bare
+  `intent mcp serve` has no HITL mechanism wired). ✅ Assertions 1 & 2 pass;
+  Assertion 3 skipped (auto-apply path).
+- Isolation held: committed fixture untouched, `$TMP` only, zero
+  frontrails-product diff. ✅
+
+**Two gate notes for anyone re-running:** (1) the committed fixture sits at the
+`product_strategy` gate, so a *tactical* change (`acceptance`/`requirement`) is
+gate-blocked — only strategy-layer entities are accepted; a
+`strategic_job_workflow` (nested under the `product_job`, `workflow_type` ∈
+`{jtbd, open}`) is the least-friction grounded change. (2) To observe the PARK
+path specifically, drive through a HITL-configured gateway (or a gate-crossing
+change) — headless bare intentos will not park a benign change.
 
 ## Cleanup
 
