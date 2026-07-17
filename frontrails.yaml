@@ -141,6 +141,27 @@ capabilities:
         action: "finish"
         params: "$.arguments.params"
 
+  intentos.simulate_and_project:
+    title: "IntentOS — run Preveti/Simuli and project into the compass"
+    description: >
+      Start a Preveti/Simuli simulation run, wait for it, and project the vetted
+      result into the OpportunityCompass (evidence-first, via the fail-closed
+      compass_write gate). params: { objective: string, audience_json: object,
+      spec_path?: string, external_id?: string }. Network + write.
+    tags: [intentos, write, preveti]
+    inputSchema:
+      type: object
+      required: [params]
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      map:
+        action: "simulate_and_project"
+        params: "$.arguments.params"
+
   intentos.worklist:
     title: "IntentOS — prioritized intent worklist (the frontier)"
     description: >
@@ -433,6 +454,7 @@ proxy:
     - { capability: intentos.worklist, tags: [primary], aliases: [worklist, frontier, todo] }
     - { capability: intentos.certify, tags: [primary], aliases: [certify, gate] }
     - { capability: intentos.finish, aliases: [finish, close] }
+    - { capability: intentos.simulate_and_project, aliases: [simulate, preveti, compass_populate] }
     - { capability: structureos.scan_repo, tags: [primary], aliases: [scan, scan_repo] }
     - { capability: structureos.get_diagnostics, aliases: [diagnostics, structure_diagnostics] }
     - { capability: structureos.move, tags: [primary], aliases: [move, refactor] }
