@@ -53,11 +53,14 @@ An agent-driven workflow: `simulating → reporting → done`.
 - `simulating` (`actor: agent`) — call `intentos.simulate_and_project` with the
   caller's `{ objective, audience_json }` (inputs, with sane defaults). It runs
   Preveti and persists the projection; capture `run_id` / `status` / `summary`.
-- `reporting` (`actor: agent`) — call `intentos.status` (and/or
-  `search_intent_harness` filtered to compass entity types —
-  `opportunity_segment` / `arena_frame` / `errc_move` / `actor`) to surface what
-  actually landed, and emit a report: run id, projected-entity counts, the
-  compass gate state. Read-only; no mutation of its own.
+- `reporting` (`actor: agent`) — surface what landed. The projected compass
+  counts (segments / arena_frames / errc_moves / actors) are already in the sim
+  `summary`. **Compass frames live in the OpportunityCompass (`compass.yaml`),
+  NOT the intent harness — so `search_intent_harness` does not list
+  arena/segment/errc frames** (verified live); call `intentos.status` to confirm
+  the compass/gate state, and use `search_intent_harness` only for projected
+  `actor` entities (those land in the harness). Emit a report: run id,
+  projected-entity counts (from `summary`), compass gate state. Read-only.
 
 `use.inputs { objective: string (default a dev-cost exemplar), audience_json:
 object (default {}) }`; `use.outputs { run_id, projected_summary,
@@ -90,9 +93,11 @@ wins" constraint).
 - **B** (`tests/preveti-compass-e2e.md`): stand up `sim_host` (in-memory,
   `SEED_DEMO=1`, `:8080`); point intentos at an isolated `$TMP` spec copy +
   `PREVETI_BASE_URL`/`PREVETI_API_KEY`; drive `flow.strategy.populate-compass`;
-  assert (1) a `run_id` returned with `status` completed, (2) compass/actor
-  entities appear in the `$TMP` spec after (via `search_intent_harness`), (3)
-  zero FrontRails diff. Runs against the **real** Preveti REST API.
+  assert (1) a `run_id` returned with `status` completed, (2) the projection
+  persisted — `$TMP/compass.yaml` contains a frame with `source simuli` + the
+  returned `run_id` (compass frames are in `compass.yaml`, not queryable via
+  `search_intent_harness`), (3) zero FrontRails diff. Runs against the **real**
+  Preveti REST API.
 - **C** (`tests/ux-vetfix-e2e.md`): reuse the foundation fixtures
   (`ux-capture/index.html` + `intent-spec/intentos.yaml`) in an isolated `$TMP`;
   drive `flow.ux.vet-and-fix`; assert the uxos finding produced a grounded change
