@@ -204,9 +204,9 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - Consumes: StructureOS (`scan_repo`, `get_diagnostics`), `cognitive-max/flow.refactor.god-file` (referenced), `run.campaign.structural-report` (Task 3).
 - Produces: workflow `flow.findings.structural`, input `budget` (default 3), initial `scanning`, terminals `done` and `paused`. State path: `scanning → picking → gate → { done | paused | refactoring → (child god-file flow) → counting → scanning }`.
 
-- [ ] **Step 1: Confirm the worst-path binding (record from Task 1 Step 4)**
+- [ ] **Step 1: Confirm the worst-path binding (recorded in Task 1)**
 
-Bind `worst_path` from the scan output at the JSON path Task 1 recorded — default `"$.output._action.call.params.path"` (StructureOS's "worst god file" handback), with `god_file_count` from `"$.output._summary.by_id.SOS001"`. If Task 1 found `get_diagnostics {id:SOS001}` more robust for worst-first ordering, use a `collecting` state calling that instead and bind `worst_path` to its first item's `node_id`. Record the choice.
+Task 1 established the reliable binding: `worst_path` = `"$.output.focus.items[0].node_id"` and `god_file_count` = `"$.output._summary.by_id.SOS001"` (both from `scan_repo`). Do NOT use `_action.call.params.path` — it is absent when only one god-file exists (the server returns `{id: SOS001}` there). `_summary.worst_files[0].path` and `get_diagnostics {id:SOS001,limit:50}.diagnostics[0].node_id` are equivalent fallbacks if `focus.items` is ever empty. Re-confirm against a live scan of the fixture before relying on it.
 
 - [ ] **Step 2: Write the orchestrator**
 
@@ -247,9 +247,12 @@ Add to `workflows:` in `frontrails-campaign.yaml`:
                 action: "$.context.act_scan"
                 params: "$.context.empty_params"
             output:
-              # SOS001 count + the worst god-file StructureOS hands back.
+              # SOS001 count + the worst god-file. Bind worst_path to
+              # focus.items[0].node_id — RELIABLE regardless of god-file count
+              # (Task-1 finding: `_action.call.params.path` is absent when only
+              # one god-file exists; the server hands back `{id: SOS001}` there).
               god_file_count: "$.output._summary.by_id.SOS001"
-              worst_path: "$.output._action.call.params.path"
+              worst_path: "$.output.focus.items[0].node_id"
 
       picking:
         goal: Decide whether to refactor another god-file this run.
