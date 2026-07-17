@@ -184,6 +184,28 @@ config. **Caveat:** `praxec check`/`fuzz` do NOT validate `kind: workflow`
 `definitionId` resolution, so a wrong id fails only at dispatch time — keep the
 id form consistent with your mount mode.
 
+### Tier 3 (advisory report) — read-only, no extra wiring
+
+`flow.findings.triage-report` is **read-only**: it scans the target repo via the
+`structureos` connection (`scan_repo`), buckets every finding code into its tier
+per `taxonomy.finding-tiers.yaml`, and emits a per-tier report under
+`.praxec/reports/triage-*.{json,md}`. It NEVER mutates code, dismisses a finding,
+or commits a branch — reporting IS the deliverable (spec §4: Tier 3 is never
+required to reach zero, deliberately avoiding the mass-dismissal trap). So Tier 3
+needs **no coding agent and no cargo** (unlike Tier 2) — only `structureos-mcp` +
+`jq`. It adds no new cross-references, so `examples/campaign-check.yaml` resolves
+it with the existing include set (no edit needed).
+
+- **Tier routing is data.** Unknown SOS codes default to Tier 3 and are listed in
+  `unknown_codes` — the first-class drift signal (spec §9): a spike means a
+  StructureOS version bump silently re-routed codes to the Tier-3 default.
+  Non-finding sentinel keys (e.g. `SOS-RUSTC-OFF`) are filtered out.
+- **Scan target.** praxec does not spawn the `structureos` connection with cwd =
+  `$.run.repo_root`, so the shipped `STRUCTUREOS_WORKSPACE_ROOT: "."` resolves to
+  the gateway's own cwd. Point the scan at your repo by running the gateway from
+  the repo root, or pin `connections.structureos.env.STRUCTUREOS_WORKSPACE_ROOT`
+  to an absolute path (see `tests/campaign-tier3-e2e.md`).
+
 ## Tests
 
 See `tests/README.md` for the manual / CI-gated E2E. Its acceptance includes
