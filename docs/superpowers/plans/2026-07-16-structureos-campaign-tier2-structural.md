@@ -393,13 +393,21 @@ dispatch + budget only.
    `cognitive-max/flow.refactor.god-file` with `target_path` = that path (the
    child flow starts and reaches its first HUMAN gate — this is the dispatch proof).
 
-## Acceptance (selection + dispatch + budget)
+## Acceptance (selection + dispatch + budget + zero-count)
 - `scanning` bound `worst_path` to the fixture's god-file path (not empty).
 - `picking` chose `refactor` (not `none`/`budget_spent`) on the first pass.
-- the child `cognitive-max/flow.refactor.god-file` was started with `target_path`
-  equal to `worst_path` (verify via the child workflow's input echo / audit event).
+- the child `flow.refactor.god-file` (unprefixed — this pack's include convention)
+  was started with `target_path` equal to `worst_path` (verify via the child
+  workflow's input echo / audit event).
 - With `budget: 0`, a fresh run instead takes `budget_spent` → `reporting_paused`
   → `paused`, and the report shows `tier2.residual >= 1` — proving the budget gate.
+- **Zero-god-file case (edge, from T2.4 review):** run against a crate with NO
+  god-file (the Tier-1 `tests/fixtures/rust-findings` fixture) with `budget: 1`.
+  The flow MUST take `picking → none → reporting → done` (reach terminal `done`,
+  NOT get stuck). This tests whether `_summary.by_id.SOS001` resolves to `0`
+  (guard `god_file_count == 0` matches) or is ABSENT/null (guard would not match
+  → stuck). If it gets stuck, FIX the orchestrator: default `god_file_count` to 0
+  when the scan omits SOS001, then re-run.
 ```
 
 - [ ] **Step 2: Execute the `budget: 1` run**
