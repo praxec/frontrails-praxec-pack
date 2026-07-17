@@ -121,6 +121,110 @@ scripts:
       jq -n --argjson god_file_count "${god_file_count:-0}" --arg worst_path "${worst_path:-}" \
         '{god_file_count: $god_file_count, worst_path: $worst_path}'
 
+  run.campaign.triage-extract:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Tier-3 extractor. Like `run.campaign.extract-godfile-summary`, this parses
+      # the raw StructureOS scan TEXT (a `kind: mcp` executor hands back the MCP
+      # text envelope at `$.output.content.0.text`, NOT parsed JSON — structureos
+      # -mcp declares no `outputSchema`; see the T2.5 finding in
+      # `run.campaign.extract-godfile-summary`), so it takes `scan_text` as argv1
+      # and jq-parses it here.
+      #
+      # It buckets EVERY finding code in `_summary.by_id` into its tier per the
+      # canonical taxonomy (`taxonomy.finding-tiers.yaml`, spec §5). praxec flows
+      # cannot read that YAML at runtime, so the flow passes the tier code-lists
+      # in as argv2..argv4 (space-separated), sourced from the flow's
+      # `initialContext` (kept consistent with the table — the same realization
+      # the Tier-1 plan documents for SOS027). Bucketing rule (spec §5 invariant):
+      #   - a code in the tier1/tier2 list routes there;
+      #   - EVERY other real `SOS<digits>` code routes to Tier 3 (default_tier 3),
+      #     whether it is an explicit Tier-3 code OR unrecognized;
+      #   - a code that is in NONE of the three lists is additionally recorded in
+      #     `unknown_codes` — the first-class drift signal (§9): a spike means a
+      #     StructureOS version bump silently re-routed codes to the Tier-3
+      #     default. Non-finding sentinel keys (e.g. `SOS-RUSTC-OFF`) are filtered
+      #     out by the `^SOS[0-9]+$` guard so they never pollute counts.
+      # Emits `{routing_json, total, tier1, tier2, tier3}` on stdout (auto-parsed
+      # into `$.output.json.*` by the script executor). `routing_json` is the full
+      # routing payload JSON-encoded as a STRING (by_code + by_tier +
+      # unknown_codes), handed straight to `run.campaign.triage-report`, which
+      # re-parses it (same string-relay pattern as `scan_text`). exit 0 always —
+      # a parse failure defaults to an all-zero landscape rather than wedging.
+      set -uo pipefail
+      scan_text="${1:-}"
+      tier1_codes="${2:-}"
+      tier2_codes="${3:-}"
+      tier3_codes="${4:-}"
+      routing="$(printf '%s' "$scan_text" | jq -c \
+        --arg t1 "$tier1_codes" --arg t2 "$tier2_codes" --arg t3 "$tier3_codes" '
+        ($t1 | split(" ") | map(select(length>0))) as $c1 |
+        ($t2 | split(" ") | map(select(length>0))) as $c2 |
+        ($t3 | split(" ") | map(select(length>0))) as $c3 |
+        def tier_of($k): if ($c1|index($k)) then "tier1" elif ($c2|index($k)) then "tier2" else "tier3" end;
+        ((._summary.by_id // {}) | to_entries
+          | map(select((.key | test("^SOS[0-9]+$")) and (.value | type == "number")))) as $codes |
+        ($codes | map({(.key): .value}) | add // {}) as $by_code |
+        (reduce $codes[] as $e ({tier1:{},tier2:{},tier3:{}}; .[tier_of($e.key)][$e.key] = $e.value)) as $by_tier |
+        {
+          by_code: $by_code,
+          by_tier: $by_tier,
+          total: ($codes | map(.value) | add // 0),
+          tier1: ($codes | map(select((.key) as $k | $c1|index($k)) | .value) | add // 0),
+          tier2: ($codes | map(select((.key) as $k | $c2|index($k)) | .value) | add // 0),
+          tier3: ($codes | map(select((.key) as $k | ($c1|index($k))|not) | select((.key) as $k | ($c2|index($k))|not) | .value) | add // 0),
+          unknown_codes: ($codes | map(.key) | map(select((. as $k | ($c1|index($k))|not) and (. as $k | ($c2|index($k))|not) and (. as $k | ($c3|index($k))|not))))
+        }' 2>/dev/null)"
+      [ -z "$routing" ] && routing='{"by_code":{},"by_tier":{"tier1":{},"tier2":{},"tier3":{}},"total":0,"tier1":0,"tier2":0,"tier3":0,"unknown_codes":[]}'
+      printf '%s' "$routing" | jq -c '{routing_json: tojson, total: .total, tier1: .tier1, tier2: .tier2, tier3: .tier3}'
+
+  run.campaign.triage-report:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Tier-3 observability report (spec §9) — read-only. Takes the full routing
+      # payload as argv1 (`routing_json`, a JSON string produced by
+      # `run.campaign.triage-extract`) and re-parses it. Writes the §9-shaped JSON
+      # (`findings_in`, `tier_routing`, `tier3`) + a markdown render grouping the
+      # full findings landscape by tier (Tier 1 safe / Tier 2 structural / Tier 3
+      # advisory) under `.praxec/reports/`. NEVER mutates code, dismisses a
+      # finding, or commits a branch — reporting IS the Tier-3 deliverable (spec
+      # §4). cwd = the executor's workingDirectory. exit 0 always.
+      set -uo pipefail
+      routing_json="${1:-{}}"
+      dir=".praxec/reports"; mkdir -p "$dir"
+      stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo run)"
+      json="$dir/triage-$stamp.json"
+      md="$dir/triage-$stamp.md"
+      printf '%s' "$routing_json" | jq '{
+        tier: 3,
+        findings_in: {by_code: (.by_code // {}), total: (.total // 0)},
+        tier_routing: {tier1: (.tier1 // 0), tier2: (.tier2 // 0), tier3: (.tier3 // 0), unknown_codes: (.unknown_codes // [])},
+        tier3: {reported: (.tier3 // 0), dismissed: 0, deferred: 0}
+      }' > "$json" 2>/dev/null
+      printf '%s' "$routing_json" | jq -r --arg stamp "$stamp" '
+        "# Triage report \($stamp) (Tier 3 — read-only, no mutation)",
+        "",
+        "Total findings: \(.total // 0)",
+        "",
+        "## Tier 1 — safe auto-fix (sweep-safe): \(.tier1 // 0)",
+        ((.by_tier.tier1 // {}) | to_entries | if length==0 then ["- (none)"] else map("- \(.key): \(.value)") end | .[]),
+        "",
+        "## Tier 2 — structural refactor (god-file): \(.tier2 // 0)",
+        ((.by_tier.tier2 // {}) | to_entries | if length==0 then ["- (none)"] else map("- \(.key): \(.value)") end | .[]),
+        "",
+        "## Tier 3 — advisory report (read-only): \(.tier3 // 0)",
+        ((.by_tier.tier3 // {}) | to_entries | if length==0 then ["- (none)"] else map("- \(.key): \(.value)") end | .[]),
+        "",
+        "Unknown codes (drift signal — routed to Tier 3 by default): \((.unknown_codes // []) | join(", ") | if .=="" then "(none)" else . end)"
+      ' > "$md" 2>/dev/null
+      printf '{"report_path": %s}\n' "$(printf '%s' "$json" | jq -Rs .)"
+
 workflows:
   flow.findings.sweep-safe:
     lifecycle: experimental
@@ -487,5 +591,103 @@ workflows:
 
       paused:
         terminal: true
+      done:
+        terminal: true
+
+  flow.findings.triage-report:
+    lifecycle: experimental
+    description: >
+      Tier 3 — read-only findings-landscape report. Scans the target repo via
+      StructureOS, buckets EVERY finding code by the canonical tier taxonomy
+      (Tier 1 safe / Tier 2 structural / Tier 3 advisory; unknown codes default
+      to Tier 3 and are flagged as a drift signal), and emits an observability
+      report grouped by tier. NEVER mutates code, dismisses a finding, or commits
+      a branch — reporting IS the deliverable (spec §4 Tier-3 DoD: never required
+      to reach zero). Deliberately avoids the mass-dismissal trap.
+    initialState: scanning
+    initialContext:
+      act_scan: "scan_repo"
+      empty_params: {}
+      scan_text: ""
+      # Tier code-lists encoded consistent with `taxonomy.finding-tiers.yaml`
+      # (spec §5). praxec flows cannot read that YAML at runtime, so the canonical
+      # table is mirrored here as the flow's tier routing (the same realization
+      # the Tier-1 plan documents for SOS027). Unknown codes are intentionally NOT
+      # listed — they default to Tier 3 and surface in `unknown_codes` (§9 drift
+      # signal). Passed to `run.campaign.triage-extract` as space-separated argv.
+      tier1_codes: "SOS027"
+      tier2_codes: "SOS001"
+      tier3_codes: "SOS025 SOS014 SOS020 SOS103 SOS010 SOS012 SOS016 SOS028 SOS037 SOS061"
+      routing_json: "{}"
+      total: 0
+      tier1_count: 0
+      tier2_count: 0
+      tier3_count: 0
+    states:
+
+      scanning:
+        goal: Refresh the structural model (StructureOS) so the findings landscape is current.
+        transitions:
+          scan:
+            target: extracting
+            actor: deterministic
+            executor:
+              kind: mcp
+              connection: structureos
+              tool: structureos
+              map:
+                action: "$.context.act_scan"
+                params: "$.context.empty_params"
+            output:
+              # Same T2.5 finding as flow.findings.structural: a `kind: mcp`
+              # executor's `$.output` is the raw MCP text envelope (structureos
+              # -mcp declares no `outputSchema`), so pull the raw JSON STRING out
+              # of `content.0.text` and let `extracting`'s script jq-parse it.
+              scan_text: "$.output.content.0.text"
+
+      extracting:
+        goal: >
+          Parse the StructureOS scan (MCP text envelope, not structured content)
+          and bucket every finding code into its tier per the taxonomy. Unknown
+          codes default to Tier 3 and are collected in unknown_codes (§9).
+        transitions:
+          extract:
+            target: reporting
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.triage-extract
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.scan_text"
+                - "$.context.tier1_codes"
+                - "$.context.tier2_codes"
+                - "$.context.tier3_codes"
+            output:
+              # routing_json carries the full landscape (by_code + by_tier +
+              # unknown_codes) as a JSON string, relayed to the report script;
+              # the scalar tier totals are bound too so the audit trace (§9)
+              # shows the routing outcome without opening the report file.
+              routing_json: "$.output.json.routing_json"
+              total: "$.output.json.total"
+              tier1_count: "$.output.json.tier1"
+              tier2_count: "$.output.json.tier2"
+              tier3_count: "$.output.json.tier3"
+
+      reporting:
+        goal: Emit the read-only per-tier findings report (spec §9). No mutation, no dismissal.
+        transitions:
+          report:
+            target: done
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.triage-report
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.routing_json"
+            output:
+              report_path: "$.output.json.report_path"
+
       done:
         terminal: true
