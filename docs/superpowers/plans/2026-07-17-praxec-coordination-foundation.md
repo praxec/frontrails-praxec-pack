@@ -227,25 +227,28 @@ Build the two fixtures and the minimal composition that proves the seam. No live
 - Consumes: `uxos.audit` (exposed), `flow.intent.propose_and_park` (Task 3).
 - Produces: a runnable, self-contained E2E.
 
-- [ ] **Step 1: UX capture fixture.** Create `tests/fixtures/ux-capture/index.html`: a minimal page with exactly one clear defect uxos will flag — an icon-only button with no accessible name, e.g.:
+**Fixture theme (do not deviate):** the user for this fixture is a **cost-conscious developer** — the actual persona of a developer-tooling product — NOT a separate "Shopper"/consumer persona. Do not model a shopping/checkout/cart flow and do not introduce an `actor.shopper`-style consumer. Both fixtures are about a developer managing build/CI cost.
+
+- [ ] **Step 1: UX capture fixture.** Create `tests/fixtures/ux-capture/index.html`: a minimal **developer-tooling** page (a CI/build cost-controls view) with exactly one clear defect uxos will flag — an icon-only button with no accessible name:
 
 ```html
 <!doctype html>
-<title>Checkout</title>
+<title>Build settings</title>
 <main>
-  <h1>Cart</h1>
+  <h1>CI cost controls</h1>
+  <p>Monthly build spend: $412</p>
   <button><svg width="16" height="16" aria-hidden="true"></svg></button>
 </main>
 ```
 
-- [ ] **Step 2: Intent-spec fixture.** Create a minimal `tests/fixtures/intent-spec/.frontrails/intent/` holding a real journey + state + requirement, so `search_intent_harness` returns genuine ids. Scaffold it with the tooling rather than hand-writing schema:
+- [ ] **Step 2: Intent-spec fixture.** Create a minimal `tests/fixtures/intent-spec/.frontrails/intent/` modeling the **cost-conscious developer** as the actor — a real actor (`Developer`), a product job / journey about controlling build cost, a state, and a requirement — so `search_intent_harness` returns genuine ids. Scaffold it with the tooling rather than hand-writing schema:
 
 ```bash
 cd tests/fixtures/intent-spec
 INTENTOS_SPEC_ROOT=. INTENTOS_WORKSPACE_ROOT=. intent init   # or the pack's documented scaffold command
 ```
 
-Then confirm it holds real entities: `INTENTOS_SPEC_ROOT=. intent status` (or drive `intentos.search_intent_harness` via the `praxec` MCP tool) returns ≥1 journey/state/requirement id. Record one real entity id in the E2E doc as the expected `grounded_in` target. If `intent init` is unavailable, copy the smallest known-good spec under `frontrails-product/.frontrails/intent/` that yields a searchable entity, trimmed to a few entities.
+Then confirm it holds real entities: `INTENTOS_SPEC_ROOT=. intent status` (or drive `intentos.search_intent_harness` via the `praxec` MCP tool) returns ≥1 actor/journey/state/requirement id. Record one real entity id in the E2E doc as the expected `grounded_in` target. If `intent init` is unavailable, copy the smallest known-good spec under `frontrails-product/.frontrails/intent/` that yields a searchable entity, trimmed to a few entities, and rename entities to the developer/cost theme. Do NOT create a shopper/checkout spec.
 
 - [ ] **Step 3: Validating consumer.** Create `examples/ux_vet_fix_min.yaml` — clearly commented "FOUNDATION E2E PROOF, not sub-project C". It includes `frontrails.yaml` + `frontrails-coordination.yaml`, and defines a tiny workflow: `assessing` (agent: `uxos.audit` on the fixture capture → produce one finding into `context.audit_findings`) → a `kind: workflow` transition into `flow.intent.propose_and_park` with `use: { inputs: { source_findings: "$.context.audit_findings", rationale: "uxos flagged an operable-name defect" }, outputs: { parked_tickets: "$.context.parked_tickets" } }` → terminal.
 
