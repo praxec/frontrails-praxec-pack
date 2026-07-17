@@ -59,6 +59,29 @@ scripts:
         printf '{"branch": %s, "committed": true}\n' "$(printf '%s' "$branch" | jq -Rs .)"
       fi
 
+  run.campaign.structural-report:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Per-run structural report (spec §9). Context arrives as templated `args:`
+      # positionally ($1..$4). cwd = the executor's workingDirectory. exit 0.
+      set -uo pipefail
+      god_file_count="${1:-0}"; targets_done="${2:-0}"; budget="${3:-0}"; residual="${4:-0}"
+      dir=".praxec/reports"; mkdir -p "$dir"
+      stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo run)"
+      json="$dir/structural-$stamp.json"
+      printf '{"tier":2,"findings_in":{"SOS001":%s},"tier2":{"targets_attempted":%s,"budget":%s,"residual":%s},"unknown_codes":[]}\n' \
+        "$god_file_count" "$targets_done" "$budget" "$residual" > "$json"
+      {
+        echo "# Structural run $stamp"
+        echo "- god-files (SOS001) in: $god_file_count"
+        echo "- targets attempted this run: $targets_done (budget $budget)"
+        echo "- residual god-files: $residual"
+      } > "$dir/structural-$stamp.md"
+      printf '{"report_path": %s}\n' "$(printf '%s' "$json" | jq -Rs .)"
+
 workflows:
   flow.findings.sweep-safe:
     lifecycle: experimental
