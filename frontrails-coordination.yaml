@@ -69,6 +69,16 @@ workflows:
         type: string
         required: false
         default: ""
+    # Top-level outputs (flows have no `snippet:`) — these NAME the terminal
+    # context slots a `kind: workflow` parent reads via `use.outputs`. Declaring
+    # them lets praxec type a consumer's projection (SPEC §7.2); without this an
+    # INCLUDED consumer (e.g. flow.ux.vet-and-fix, frontrails-ux.yaml) fails
+    # check with UNKNOWN_CAP_OUTPUT_TARGET (a root-config consumer like
+    # examples/ux_vet_fix_min.yaml is validated leniently and does not).
+    outputs:
+      parked_tickets: { type: array }
+      applied:        { type: array }
+      grounded_refs:  { type: array }
     initialState: grounding
     initialContext:
       # The three declared `use.outputs` accumulators (design §4.2). Seeded

@@ -1,0 +1,6 @@
+# Check harness for sub-project C (flow.ux.vet-and-fix). C dispatches the shipped
+# coordination tail, so it needs frontrails-coordination.yaml too.
+include:
+  - ../frontrails.yaml
+  - ../frontrails-coordination.yaml
+  - ../frontrails-ux.yaml
