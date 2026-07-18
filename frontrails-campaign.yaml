@@ -1,0 +1,693 @@
+# frontrails-campaign.yaml
+# Additive campaign layer — deep-merges alongside frontrails.yaml (maps merge,
+# scalars: later wins). Declares the StructureOS findings-cleanup flows + their
+# scripts. No praxec.repo.yaml migration (spec §2).
+version: "1.0.0"
+
+scripts:
+  run.campaign.sweep-report:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Per-run observability report (spec §9). The `kind: script` executor sets
+      # the process cwd to its `workingDirectory` ($.run.repo_root) and passes
+      # the run-context fields as POSITIONAL ARGS (jsonpath-templated `$.context.*`
+      # in the transition executor's `args:` — env values are NOT templated, and
+      # the only script-scoped env praxec injects is PRAXEC_SCRIPT_SUBJECT/HASH).
+      # So: argv1=finding_count, argv2=fixed_count, argv3=build_passed; cwd is
+      # already the run repo (do NOT cd off it). Writes JSON + markdown under
+      # .praxec/reports/, emits the path.
+      set -uo pipefail
+      finding_count="${1:-0}"
+      fixed_count="${2:-0}"
+      build_passed="${3:-false}"
+      dir=".praxec/reports"; mkdir -p "$dir"
+      # No run-id is templatable into args ($.run.* exposes only repo_root), and
+      # no PRAXEC_RUN_ID env exists — stamp from the wall clock so runs don't
+      # clobber each other.
+      stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+      json="$dir/sweep-safe-$stamp.json"
+      printf '{"tier":1,"findings_in":{"SOS027":%s},"tier1":{"fixed":%s,"gate_result":%s},"unknown_codes":[]}\n' \
+        "$finding_count" "$fixed_count" "$build_passed" > "$json"
+      {
+        echo "# Sweep-safe run $stamp"
+        echo "- SOS027 findings in: $finding_count"
+        echo "- fixed: $fixed_count"
+        echo "- build gate: $build_passed"
+      } > "$dir/sweep-safe-$stamp.md"
+      printf '{"report_path": %s}\n' "$(printf '%s' "$json" | jq -Rs .)"
+
+  run.campaign.commit-branch:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Commit the working-tree fixes on a campaign branch; a human/CI opens the
+      # PR (spec §10 — no cap.coordinate.pr-open in v1). Exit 0 always.
+      set -uo pipefail
+      cwd="${1:-$PWD}"; cd "$cwd" 2>/dev/null || true
+      branch="campaign/sweep-safe"
+      git checkout -b "$branch" 2>/dev/null || git checkout "$branch"
+      git add -A
+      if git diff --cached --quiet; then
+        printf '{"branch": %s, "committed": false}\n' "$(printf '%s' "$branch" | jq -Rs .)"
+      else
+        git commit -m "chore(campaign): sweep unused imports (SOS027) via cargo fix" >/dev/null
+        printf '{"branch": %s, "committed": true}\n' "$(printf '%s' "$branch" | jq -Rs .)"
+      fi
+
+  run.campaign.structural-report:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Per-run structural report (spec §9). Context arrives as templated `args:`
+      # positionally ($1..$4). cwd = the executor's workingDirectory. exit 0.
+      set -uo pipefail
+      god_file_count="${1:-0}"; targets_done="${2:-0}"; budget="${3:-0}"; residual="${4:-0}"
+      dir=".praxec/reports"; mkdir -p "$dir"
+      stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo run)"
+      json="$dir/structural-$stamp.json"
+      printf '{"tier":2,"findings_in":{"SOS001":%s},"tier2":{"targets_attempted":%s,"budget":%s,"residual":%s},"unknown_codes":[]}\n' \
+        "$god_file_count" "$targets_done" "$budget" "$residual" > "$json"
+      {
+        echo "# Structural run $stamp"
+        echo "- god-files (SOS001) in: $god_file_count"
+        echo "- targets attempted this run: $targets_done (budget $budget)"
+        echo "- residual god-files: $residual"
+      } > "$dir/structural-$stamp.md"
+      printf '{"report_path": %s}\n' "$(printf '%s' "$json" | jq -Rs .)"
+
+  run.campaign.extract-godfile-summary:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # T2.5 E2E finding: a `kind: mcp` executor's `$.output` is the raw MCP
+      # envelope, not parsed JSON (structureos-mcp returns text content, no
+      # `structuredContent` — it declares no `outputSchema`). `scanning` hands
+      # this script the raw `content[0].text` STRING via argv1; parse it here
+      # (mirrors `kind: script`'s own stdout->`.output.json` convenience,
+      # which `kind: mcp` lacks). Also defends the zero-god-file edge: when no
+      # god file exists, StructureOS omits `_summary.by_id.SOS001` entirely
+      # (not 0) — jq's `// 0` / `// empty` default to a safe zero/empty so
+      # `picking`'s `== 0` guard actually matches instead of comparing against
+      # null forever. exit 0 always (a parse failure defaults to "no god
+      # files" rather than wedging the flow).
+      #
+      # worst_path bind (T2.5 whole-branch review fix, source-verified):
+      # take it from `._summary.worst_files[0].path`, NOT `.focus.items[0]`.
+      # `focus` is the FIRST category in StructureOS's PRIORITY_ORDER with
+      # count>0, and that order is ParseErrors(SOS400) -> GodFiles(SOS001) ->
+      # ... (structureos-contract/src/action_digest.rs) — so
+      # `focus.category == god_files` ONLY when the repo has no parse errors.
+      # On a real repo with parse errors alongside god-files, `god_file_count`
+      # (from `_summary.by_id.SOS001`) is still >0 so `picking` correctly
+      # routes to `refactor`, but `focus.items[0].node_id` would resolve to a
+      # PARSE-ERROR node -> the god-file flow would be dispatched against the
+      # wrong file. `_summary.worst_files` is category-independent and sorted
+      # by `god_file_score` desc (router_summary.rs `build_worst_files`,
+      # filtered to score>0.5), so `worst_files[0].path` is always the worst
+      # god-file whenever SOS001>0, and empty when none exist.
+      set -uo pipefail
+      scan_text="${1:-}"
+      god_file_count="$(printf '%s' "$scan_text" | jq -r '._summary.by_id.SOS001 // 0' 2>/dev/null || echo 0)"
+      worst_path="$(printf '%s' "$scan_text" | jq -r '._summary.worst_files[0].path // empty' 2>/dev/null || true)"
+      jq -n --argjson god_file_count "${god_file_count:-0}" --arg worst_path "${worst_path:-}" \
+        '{god_file_count: $god_file_count, worst_path: $worst_path}'
+
+  run.campaign.triage-extract:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Tier-3 extractor. Like `run.campaign.extract-godfile-summary`, this parses
+      # the raw StructureOS scan TEXT (a `kind: mcp` executor hands back the MCP
+      # text envelope at `$.output.content.0.text`, NOT parsed JSON — structureos
+      # -mcp declares no `outputSchema`; see the T2.5 finding in
+      # `run.campaign.extract-godfile-summary`), so it takes `scan_text` as argv1
+      # and jq-parses it here.
+      #
+      # It buckets EVERY finding code in `_summary.by_id` into its tier per the
+      # canonical taxonomy (`taxonomy.finding-tiers.yaml`, spec §5). praxec flows
+      # cannot read that YAML at runtime, so the flow passes the tier code-lists
+      # in as argv2..argv4 (space-separated), sourced from the flow's
+      # `initialContext` (kept consistent with the table — the same realization
+      # the Tier-1 plan documents for SOS027). Bucketing rule (spec §5 invariant):
+      #   - a code in the tier1/tier2 list routes there;
+      #   - EVERY other real `SOS<digits>` code routes to Tier 3 (default_tier 3),
+      #     whether it is an explicit Tier-3 code OR unrecognized;
+      #   - a code that is in NONE of the three lists is additionally recorded in
+      #     `unknown_codes` — the first-class drift signal (§9): a spike means a
+      #     StructureOS version bump silently re-routed codes to the Tier-3
+      #     default. Non-finding sentinel keys (e.g. `SOS-RUSTC-OFF`) are filtered
+      #     out by the `^SOS[0-9]+$` guard so they never pollute counts.
+      # Emits `{routing_json, total, tier1, tier2, tier3}` on stdout (auto-parsed
+      # into `$.output.json.*` by the script executor). `routing_json` is the full
+      # routing payload JSON-encoded as a STRING (by_code + by_tier +
+      # unknown_codes), handed straight to `run.campaign.triage-report`, which
+      # re-parses it (same string-relay pattern as `scan_text`). exit 0 always —
+      # a parse failure defaults to an all-zero landscape rather than wedging.
+      set -uo pipefail
+      scan_text="${1:-}"
+      tier1_codes="${2:-}"
+      tier2_codes="${3:-}"
+      tier3_codes="${4:-}"
+      routing="$(printf '%s' "$scan_text" | jq -c \
+        --arg t1 "$tier1_codes" --arg t2 "$tier2_codes" --arg t3 "$tier3_codes" '
+        ($t1 | split(" ") | map(select(length>0))) as $c1 |
+        ($t2 | split(" ") | map(select(length>0))) as $c2 |
+        ($t3 | split(" ") | map(select(length>0))) as $c3 |
+        def tier_of($k): if ($c1|index($k)) then "tier1" elif ($c2|index($k)) then "tier2" else "tier3" end;
+        ((._summary.by_id // {}) | to_entries
+          | map(select((.key | test("^SOS[0-9]+$")) and (.value | type == "number")))) as $codes |
+        ($codes | map({(.key): .value}) | add // {}) as $by_code |
+        (reduce $codes[] as $e ({tier1:{},tier2:{},tier3:{}}; .[tier_of($e.key)][$e.key] = $e.value)) as $by_tier |
+        {
+          by_code: $by_code,
+          by_tier: $by_tier,
+          total: ($codes | map(.value) | add // 0),
+          tier1: ($codes | map(select((.key) as $k | $c1|index($k)) | .value) | add // 0),
+          tier2: ($codes | map(select((.key) as $k | $c2|index($k)) | .value) | add // 0),
+          tier3: ($codes | map(select((.key) as $k | ($c1|index($k))|not) | select((.key) as $k | ($c2|index($k))|not) | .value) | add // 0),
+          unknown_codes: ($codes | map(.key) | map(select((. as $k | ($c1|index($k))|not) and (. as $k | ($c2|index($k))|not) and (. as $k | ($c3|index($k))|not))))
+        }' 2>/dev/null)"
+      [ -z "$routing" ] && routing='{"by_code":{},"by_tier":{"tier1":{},"tier2":{},"tier3":{}},"total":0,"tier1":0,"tier2":0,"tier3":0,"unknown_codes":[]}'
+      printf '%s' "$routing" | jq -c '{routing_json: tojson, total: .total, tier1: .tier1, tier2: .tier2, tier3: .tier3}'
+
+  run.campaign.triage-report:
+    verb: run
+    lifecycle: experimental
+    source: frontrails-praxec-pack
+    body: |
+      #!/usr/bin/env bash
+      # Tier-3 observability report (spec §9) — read-only. Takes the full routing
+      # payload as argv1 (`routing_json`, a JSON string produced by
+      # `run.campaign.triage-extract`) and re-parses it. Writes the §9-shaped JSON
+      # (`findings_in`, `tier_routing`, `tier3`) + a markdown render grouping the
+      # full findings landscape by tier (Tier 1 safe / Tier 2 structural / Tier 3
+      # advisory) under `.praxec/reports/`. NEVER mutates code, dismisses a
+      # finding, or commits a branch — reporting IS the Tier-3 deliverable (spec
+      # §4). cwd = the executor's workingDirectory. exit 0 always.
+      set -uo pipefail
+      routing_json="${1:-{}}"
+      dir=".praxec/reports"; mkdir -p "$dir"
+      stamp="$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || echo run)"
+      json="$dir/triage-$stamp.json"
+      md="$dir/triage-$stamp.md"
+      printf '%s' "$routing_json" | jq '{
+        tier: 3,
+        findings_in: {by_code: (.by_code // {}), total: (.total // 0)},
+        tier_routing: {tier1: (.tier1 // 0), tier2: (.tier2 // 0), tier3: (.tier3 // 0), unknown_codes: (.unknown_codes // [])},
+        tier3: {reported: (.tier3 // 0), dismissed: 0, deferred: 0}
+      }' > "$json" 2>/dev/null
+      printf '%s' "$routing_json" | jq -r --arg stamp "$stamp" '
+        "# Triage report \($stamp) (Tier 3 — read-only, no mutation)",
+        "",
+        "Total findings: \(.total // 0)",
+        "",
+        "## Tier 1 — safe auto-fix (sweep-safe): \(.tier1 // 0)",
+        ((.by_tier.tier1 // {}) | to_entries | if length==0 then ["- (none)"] else map("- \(.key): \(.value)") end | .[]),
+        "",
+        "## Tier 2 — structural refactor (god-file): \(.tier2 // 0)",
+        ((.by_tier.tier2 // {}) | to_entries | if length==0 then ["- (none)"] else map("- \(.key): \(.value)") end | .[]),
+        "",
+        "## Tier 3 — advisory report (read-only): \(.tier3 // 0)",
+        ((.by_tier.tier3 // {}) | to_entries | if length==0 then ["- (none)"] else map("- \(.key): \(.value)") end | .[]),
+        "",
+        "Unknown codes (drift signal — routed to Tier 3 by default): \((.unknown_codes // []) | join(", ") | if .=="" then "(none)" else . end)"
+      ' > "$md" 2>/dev/null
+      printf '{"report_path": %s}\n' "$(printf '%s' "$json" | jq -Rs .)"
+
+workflows:
+  flow.findings.sweep-safe:
+    lifecycle: experimental
+    description: >
+      Tier 1 — deterministic, agent-free removal of unused-import findings
+      (SOS027) via cargo fix, gated by a cargo build. Commits a branch; a human
+      opens the PR. A red build surfaces to needs_human — a deterministic fix
+      producing a red build is itself a finding.
+    initialState: probing
+    initialContext:
+      # Language-extension seam (spec §5a): conceptually detect.safe / fix.safe
+      # / verify.build, resolved from `language`. Step 1a (this task) empirically
+      # confirmed praxec's script executor does NOT resolve a `$.context.*` path
+      # for `subject:` — `praxec fuzz` fails with
+      # "EngineError: start failed: subject 'context.ext_detect_safe' is
+      # unresolved" even though `praxec check` accepts it (check does not
+      # validate subject resolution at all). So the states below bind the three
+      # seam scripts via LITERAL subjects; language selection for v1+ is
+      # realized by swapping which extension file is `include`d (e.g.
+      # extensions/rust.yaml), not by dynamic context lookup. These ext_* fields
+      # are kept as documentation of the seam's conceptual names, not live
+      # bindings.
+      language: "rust"
+      # Blessed-root script subjects (SPEC §22.4). Conceptual seam names in §5a.
+      ext_detect_safe: "inspect.rust.safe-findings"
+      ext_fix_safe: "run.rust.fix-safe"
+      ext_verify_build: "verify.cargo.cwd"
+      finding_count: 0
+      fixed_count: 0
+      build_passed: false
+      build_summary: ""
+      build_issues: ""
+    states:
+
+      probing:
+        goal: Detect safe auto-fixable findings via the language extension (detect.safe).
+        transitions:
+          probe:
+            target: gate_empty
+            actor: deterministic
+            executor:
+              kind: script
+              subject: inspect.rust.safe-findings
+              workingDirectory: "$.run.repo_root"
+            output:
+              finding_count: "$.output.json.count"
+
+      gate_empty:
+        transitions:
+          none:
+            target: done
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.finding_count == 0" } ]
+          some:
+            target: fixing
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.finding_count > 0" } ]
+
+      fixing:
+        goal: Apply the deterministic fix via the language extension (fix.safe; NO agent).
+        transitions:
+          fix:
+            target: building
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.rust.fix-safe
+              workingDirectory: "$.run.repo_root"
+            output:
+              fixed_count: "$.output.json.fixed_count"
+
+      building:
+        goal: Build/test gate via the language extension (verify.build) — the real acceptance test.
+        transitions:
+          build:
+            target: build_gate
+            actor: deterministic
+            executor:
+              kind: script
+              subject: verify.cargo.cwd
+              workingDirectory: "$.run.repo_root"
+            output:
+              build_passed: "$.output.json.passed"
+              build_summary: "$.output.json.summary"
+              build_issues: "$.output.json.issues"
+
+      build_gate:
+        transitions:
+          accept:
+            target: reporting
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.build_passed == true" } ]
+          reject:
+            target: needs_human
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.build_passed == false" } ]
+
+      reporting:
+        goal: Emit the per-run observability report.
+        transitions:
+          report:
+            target: committing
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.sweep-report
+              workingDirectory: "$.run.repo_root"
+              # Pass the run context into the report as positional args. Executor
+              # args are jsonpath-templated (`$.context.*`), unlike `env:` — so
+              # argv1=finding_count, argv2=fixed_count, argv3=build_passed reach
+              # the script body. workingDirectory sets cwd (not an argv slot).
+              args:
+                - "$.context.finding_count"
+                - "$.context.fixed_count"
+                - "$.context.build_passed"
+            output:
+              report_path: "$.output.json.report_path"
+
+      committing:
+        goal: Commit the fixes on a branch; a human/CI opens the PR.
+        transitions:
+          commit:
+            target: done
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.commit-branch
+              workingDirectory: "$.run.repo_root"
+            output:
+              branch: "$.output.json.branch"
+
+      needs_human:
+        goal: >
+          The deterministic fix broke the build — a compiler-verified fix
+          producing a red build is itself a finding. Review $.context.build_issues
+          and decide.
+        transitions:
+          review:
+            target: done
+            actor: human
+            inputSchema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string }
+            executor: { kind: noop }
+            output:
+              decision: "$.arguments.decision"
+
+      done:
+        terminal: true
+
+  flow.findings.structural:
+    lifecycle: experimental
+    description: >
+      Tier 2 — budgeted, stateless, per-target god-file decomposition. Scans via
+      StructureOS, picks the worst god-file (SOS001), and dispatches it to the
+      proven cognitive-max/flow.refactor.god-file (human-gated + agent fixup).
+      Processes at most `budget` targets per run; residual god-files land in
+      `paused` (re-run to continue). NOT agent-free — the referenced flow uses a
+      coding agent.
+    inputs:
+      # T2.5 E2E FINDING: the runtime seeds `$.context.<key>` from a caller's
+      # `input.<key>` only when `initialContext` does NOT already declare that
+      # key literally (`ctx.entry(k).or_insert(...)` — see
+      # praxec-core/src/runtime/runtime.rs:550-555, "initialContext wins").
+      # `initialContext` used to hardcode `budget: 3`, which made a caller's
+      # `input: {budget: N}` silently INERT (verified live: a
+      # `praxec command` run with `input:{budget:0}` still showed
+      # `context.budget == 3`). Fix: no literal `budget` in `initialContext`
+      # below, and `default: 3` here instead — `apply_schema_defaults`
+      # (runtime_schema.rs) fills the input from this schema default only
+      # when the caller omits it, then the input->context seeding step
+      # actually applies it. This makes `budget` a REAL, overridable input.
+      budget: { type: integer, required: false, default: 3 }
+      # NOT a real caller input — `worst_path` is computed at runtime by
+      # `extracting`. It must still be declared here: praxec's V13 slot-table
+      # check only treats a `$.context.*` path referenced via `use:.inputs`
+      # as reachable when it is either declared in `inputs:` or written by
+      # another `kind: workflow` transition's `use:.outputs:` — a
+      # `kind: mcp`/`kind: script` executor's `output:` write (like
+      # `extracting`'s) is invisible to that static check. Declaring it here
+      # (required: false, no caller ever sets it in practice) is the
+      # sanctioned way to register an internally-computed slot so
+      # `refactoring`'s `use: { inputs: { target_path: "$.context.worst_path"
+      # } }` passes V13 (SPEC §7.3). `initialContext`'s `worst_path: ""`
+      # default below is harmless here — nothing seeds an input over it, and
+      # `extracting` unconditionally overwrites it every pass.
+      worst_path: { type: string, required: false }
+    initialState: scanning
+    initialContext:
+      act_scan: "scan_repo"
+      empty_params: {}
+      targets_done: 0
+      god_file_count: 0
+      worst_path: ""
+      scan_text: ""
+    states:
+
+      scanning:
+        goal: Refresh the structural model (StructureOS) so god-file selection is current.
+        transitions:
+          scan:
+            target: extracting
+            actor: deterministic
+            executor:
+              kind: mcp
+              connection: structureos
+              tool: structureos
+              map:
+                action: "$.context.act_scan"
+                params: "$.context.empty_params"
+            output:
+              # T2.5 E2E FINDING (real, live-verified): a `kind: mcp` executor's
+              # `$.output` is NOT the parsed StructureOS JSON. `structureos-mcp`
+              # declares no `outputSchema` and returns plain MCP text content,
+              # so praxec's mcp executor (praxec-executors/src/mcp.rs:428-434)
+              # falls back to `{"content":[{"type":"text","text":"<json
+              # string>"}]}` — `$.output._summary...` / `$.output.focus...`
+              # (the previous binding here) ALWAYS resolved to null, live-god-file
+              # fixture or not (confirmed: a `praxec command` run against
+              # tests/fixtures/rust-godfile produced `god_file_count: null,
+              # worst_path: null` and a stuck `picking` — "all 3 candidates had
+              # failing guards"). praxec's plain JSON-pointer path reader
+              # (mapping.rs) cannot parse a JSON *string* value further, so
+              # pull out the raw text here (a plain pointer traversal,
+              # `content.0.text` — no `[*]` needed, numeric segments index
+              # arrays fine) and hand it to `extracting`'s script, which does
+              # the actual jq parse (mirrors `kind: script`'s own
+              # stdout->`.output.json` auto-parse convenience, which `kind: mcp`
+              # has no equivalent of).
+              scan_text: "$.output.content.0.text"
+
+      extracting:
+        goal: >
+          Parse the StructureOS scan JSON (handed back as MCP text content,
+          not structured content) to pull the SOS001 count + worst god-file
+          path. Also the ONE place that defends the zero-god-file edge: when
+          no god file exists, StructureOS omits `_summary.by_id.SOS001`
+          entirely (confirmed live against tests/fixtures/rust-findings:
+          `_summary.by_id == {"SOS-RUSTC-OFF":1}` — no `SOS001` key at all —
+          and `focus: null`), so a naive `.by_id.SOS001` read is null/absent,
+          not 0. `picking`'s guards below are `== 0` / `> 0`, neither of
+          which matches null — a null `god_file_count` would leave `picking`
+          permanently stuck with "no viable deterministic transition". The
+          script defaults an absent SOS001 to 0 via jq's `// 0`.
+        transitions:
+          extract:
+            target: picking
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.extract-godfile-summary
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.scan_text"
+            output:
+              god_file_count: "$.output.json.god_file_count"
+              worst_path: "$.output.json.worst_path"
+
+      picking:
+        goal: Decide whether to refactor another god-file this run.
+        transitions:
+          none:
+            target: reporting
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.god_file_count == 0" } ]
+          budget_spent:
+            target: reporting_paused
+            actor: deterministic
+            guards:
+              - { kind: expr, expr: "$.context.god_file_count > 0" }
+              - { kind: expr, expr: "$.context.targets_done >= $.context.budget" }
+          refactor:
+            target: refactoring
+            actor: deterministic
+            guards:
+              - { kind: expr, expr: "$.context.god_file_count > 0" }
+              - { kind: expr, expr: "$.context.targets_done < $.context.budget" }
+
+      refactoring:
+        goal: Dispatch the worst god-file to the god-file decomposition flow.
+        transitions:
+          decompose:
+            target: counting
+            actor: deterministic
+            executor:
+              kind: workflow
+              # NOT "cognitive-max/flow.refactor.god-file" (the README's stated
+              # production convention, which assumes the consumer mounts
+              # cognitive-architectures-max via a `repos:` block, earning the
+              # namespace prefix). `examples/campaign-check.yaml` (this repo's
+              # own check harness, Task 2) instead raw-`include:`s
+              # `../../cognitive-architectures-max/orchestrators/flow.refactor.god-file.yaml`
+              # directly, so the id actually LOADED there is unprefixed —
+              # confirmed via `praxec query '{"subject":"flow.refactor.god-file"}'`
+              # (full definition, `item` populated) vs the same query for the
+              # "cognitive-max/"-prefixed form (`item: null`). Verified this
+              # matters at runtime, not just cosmetically: neither `praxec
+              # check` nor `praxec fuzz` catch a wrong/dangling `kind: workflow`
+              # `definitionId` when the config has no `repos:` block (proved by
+              # deliberately pointing this field at a nonexistent id — both
+              # stayed green); a live `praxec command` dispatch against the
+              # bogus id failed for real
+              # (`CHAIN_FAILED`/`permanent_error`: "failed to start sub-workflow:
+              # workflow definition '...' not found"). So the literal string
+              # below is the one empirically confirmed to resolve AND execute
+              # against this repo's check config. A real multi-repo consumer
+              # following the README's `repos:`-mounting instructions would
+              # need the prefixed form instead; reconciling the two is flagged
+              # as an open concern.
+              definitionId: flow.refactor.god-file
+              use:
+                inputs:
+                  target_path: "$.context.worst_path"
+            output:
+              last_target: "$.context.worst_path"
+
+      counting:
+        goal: Count the processed target and re-scan for the next.
+        transitions:
+          next:
+            target: scanning
+            actor: deterministic
+            executor: { kind: noop }
+            output:
+              targets_done: { add: ["$.context.targets_done", 1] }
+
+      reporting:
+        goal: Emit the per-run structural report (all god-files cleared or none present).
+        transitions:
+          report:
+            target: done
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.structural-report
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.god_file_count"
+                - "$.context.targets_done"
+                - "$.context.budget"
+                - "$.context.god_file_count"
+            output:
+              report_path: "$.output.json.report_path"
+
+      reporting_paused:
+        goal: Emit the report noting residual god-files (budget spent).
+        transitions:
+          report:
+            target: paused
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.structural-report
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.god_file_count"
+                - "$.context.targets_done"
+                - "$.context.budget"
+                - "$.context.god_file_count"
+            output:
+              report_path: "$.output.json.report_path"
+
+      paused:
+        terminal: true
+      done:
+        terminal: true
+
+  flow.findings.triage-report:
+    lifecycle: experimental
+    description: >
+      Tier 3 — read-only findings-landscape report. Scans the target repo via
+      StructureOS, buckets EVERY finding code by the canonical tier taxonomy
+      (Tier 1 safe / Tier 2 structural / Tier 3 advisory; unknown codes default
+      to Tier 3 and are flagged as a drift signal), and emits an observability
+      report grouped by tier. NEVER mutates code, dismisses a finding, or commits
+      a branch — reporting IS the deliverable (spec §4 Tier-3 DoD: never required
+      to reach zero). Deliberately avoids the mass-dismissal trap.
+    initialState: scanning
+    initialContext:
+      act_scan: "scan_repo"
+      empty_params: {}
+      scan_text: ""
+      # Tier code-lists encoded consistent with `taxonomy.finding-tiers.yaml`
+      # (spec §5). praxec flows cannot read that YAML at runtime, so the canonical
+      # table is mirrored here as the flow's tier routing (the same realization
+      # the Tier-1 plan documents for SOS027). Unknown codes are intentionally NOT
+      # listed — they default to Tier 3 and surface in `unknown_codes` (§9 drift
+      # signal). Passed to `run.campaign.triage-extract` as space-separated argv.
+      tier1_codes: "SOS027"
+      tier2_codes: "SOS001"
+      tier3_codes: "SOS025 SOS014 SOS020 SOS103 SOS010 SOS012 SOS016 SOS028 SOS037 SOS061"
+      routing_json: "{}"
+      total: 0
+      tier1_count: 0
+      tier2_count: 0
+      tier3_count: 0
+    states:
+
+      scanning:
+        goal: Refresh the structural model (StructureOS) so the findings landscape is current.
+        transitions:
+          scan:
+            target: extracting
+            actor: deterministic
+            executor:
+              kind: mcp
+              connection: structureos
+              tool: structureos
+              map:
+                action: "$.context.act_scan"
+                params: "$.context.empty_params"
+            output:
+              # Same T2.5 finding as flow.findings.structural: a `kind: mcp`
+              # executor's `$.output` is the raw MCP text envelope (structureos
+              # -mcp declares no `outputSchema`), so pull the raw JSON STRING out
+              # of `content.0.text` and let `extracting`'s script jq-parse it.
+              scan_text: "$.output.content.0.text"
+
+      extracting:
+        goal: >
+          Parse the StructureOS scan (MCP text envelope, not structured content)
+          and bucket every finding code into its tier per the taxonomy. Unknown
+          codes default to Tier 3 and are collected in unknown_codes (§9).
+        transitions:
+          extract:
+            target: reporting
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.triage-extract
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.scan_text"
+                - "$.context.tier1_codes"
+                - "$.context.tier2_codes"
+                - "$.context.tier3_codes"
+            output:
+              # routing_json carries the full landscape (by_code + by_tier +
+              # unknown_codes) as a JSON string, relayed to the report script;
+              # the scalar tier totals are bound too so the audit trace (§9)
+              # shows the routing outcome without opening the report file.
+              routing_json: "$.output.json.routing_json"
+              total: "$.output.json.total"
+              tier1_count: "$.output.json.tier1"
+              tier2_count: "$.output.json.tier2"
+              tier3_count: "$.output.json.tier3"
+
+      reporting:
+        goal: Emit the read-only per-tier findings report (spec §9). No mutation, no dismissal.
+        transitions:
+          report:
+            target: done
+            actor: deterministic
+            executor:
+              kind: script
+              subject: run.campaign.triage-report
+              workingDirectory: "$.run.repo_root"
+              args:
+                - "$.context.routing_json"
+            output:
+              report_path: "$.output.json.report_path"
+
+      done:
+        terminal: true

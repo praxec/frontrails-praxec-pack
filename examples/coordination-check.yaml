@@ -1,0 +1,7 @@
+# examples/coordination-check.yaml
+# Minimal gateway config to structurally validate the coordination layer.
+# Mirrors examples/campaign-check.yaml's shape: relative paths because this
+# file lives in examples/, one level below the pack root.
+include:
+  - ../frontrails.yaml
+  - ../frontrails-coordination.yaml

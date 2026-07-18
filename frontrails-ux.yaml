@@ -1,0 +1,154 @@
+# frontrails-ux.yaml
+# Sub-project C — uxos + IntentOS UX vet-and-fix. Additive; deep-merges alongside
+# frontrails.yaml + frontrails-coordination.yaml (maps merge, scalars later-wins),
+# like frontrails-campaign.yaml. Design spec:
+# docs/superpowers/specs/2026-07-17-operationalize-b-c-design.md §4.2.
+# FrontRails itself is never modified.
+#
+# `flow.ux.vet-and-fix` vets a real surface with uxos and turns its findings into
+# grounded IntentOS proposals via the shipped coordination tail
+# (flow.intent.propose_and_park, frontrails-coordination.yaml). uxos is the
+# findings PRODUCER; the tail is the source-agnostic mutation sink. The tail
+# already iterates a whole `source_findings` list internally, so this workflow
+# hands it the budget-capped slice in ONE `kind: workflow` dispatch — no
+# per-finding loop here.
+#
+# THREE-OUTCOMES REALITY (verified live, foundation E2E): a propose is `approved`
+# (applies directly), `pending_approval` (parks), or `needs_review` (gate HITL).
+# A headless propose with no HITL mechanism AUTO-APPLIES; it parks only through a
+# HITL-configured context or a gate-crossing change. This workflow RECORDS
+# whichever outcome the tail reports (`applied` AND `parked_tickets`) — it does
+# not force a park and never self-approves.
+#
+# All states `actor: agent` (the running LLM drives each hop; no auto-chain).
+# Capabilities used are all already exposed in frontrails.yaml: `uxos.extract`,
+# `uxos.audit`, and — inside the tail — the intentos.* trio. Bookkeeping is
+# `kind: noop` with `output: {k: "$.arguments.k"}` (praxec mapping has no
+# array-append; the agent resubmits the whole array — same idiom as the
+# coordination tail and frontrails-campaign.yaml).
+version: "1.0.0"
+
+workflows:
+  flow.ux.vet-and-fix:
+    lifecycle: experimental
+    description: >
+      Vet a UX surface with uxos and fix it through IntentOS: extract a UX-IR
+      from a capture, audit it, then hand up to `budget` findings to the reusable
+      `flow.intent.propose_and_park` tail as grounded proposals. Records whichever
+      outcome each proposal reaches (applied or parked) — never self-approves,
+      never fabricates a grounding id. Budget-capped + stateless (mirrors the
+      Tier-2 campaign discipline); findings beyond budget are reported as residual.
+    inputs:
+      # The captured surface (raw HTML or a11y tree) uxos.extract lifts to an IR.
+      capture_html:
+        type: string
+        required: true
+      # Max findings dispatched to the tail per run. Declared here with a default
+      # (NOT seeded in initialContext) so a caller's `input.budget` is honored —
+      # "initialContext wins" would otherwise make it inert.
+      budget:
+        type: integer
+        required: false
+        default: 3
+      # Internal slot, not a real caller input — declared here (with a default)
+      # so V13 (SPEC §7.3) treats it as reachable when `dispatching.fix`
+      # references `$.context.audit_findings` via `use.inputs`. A `kind: noop`
+      # `output:` write does NOT satisfy V13 reachability (Tier-2 finding), and
+      # `initialContext` seeding does not either — only an `inputs:` declaration
+      # or a `kind: workflow` `use.outputs` write does. The `auditing.record`
+      # transition overwrites it with the budget-capped findings. (Same shape as
+      # the foundation's examples/ux_vet_fix_min.yaml.)
+      audit_findings:
+        type: array
+        required: false
+        default: []
+    initialState: auditing
+    initialContext:
+      # residual_findings is only referenced in prose (reporting goal), never via
+      # `use.inputs`, so it needs no `inputs:` declaration. The three tail outputs
+      # (applied / parked_tickets / grounded_refs) are intentionally NOT seeded:
+      # a `use.outputs` projection into a PRE-declared slot makes praxec type it
+      # against the child's output (SPEC §7.2); left unseeded the `fix`
+      # projection creates them fresh.
+      residual_findings: []
+    maxChainDepth: 40
+    states:
+
+      auditing:
+        goal: >
+          Call `extract` with `{ html: $.context.capture_html }` to lift a UX-IR,
+          then `audit` the returned IR. Collect the audit's blockers/findings
+          (e.g. a semantic-a11y blocker like a control with no accessibleName)
+          into `source_findings`-shaped elements — each `{ target_hint, detail }`
+          where `target_hint` is what the tail's `grounding.search` will feed to
+          `search_intent_harness`. Record the first `budget` of them as
+          `audit_findings` and any beyond `budget` as `residual_findings` via
+          `record`, then `advance`. If the audit is clean (no findings), record
+          empty arrays and advance — a clean surface is a valid outcome.
+        transitions:
+          extract:
+            target: auditing
+            actor: agent
+            executor: { capability: uxos.extract }
+          audit:
+            target: auditing
+            actor: agent
+            executor: { capability: uxos.audit }
+          record:
+            title: Persist the budget-capped audit_findings + residual_findings
+            target: auditing
+            actor: agent
+            inputSchema:
+              type: object
+              required: [audit_findings, residual_findings]
+              properties:
+                audit_findings: { type: array }
+                residual_findings: { type: array }
+            executor: { kind: noop }
+            output:
+              audit_findings: "$.arguments.audit_findings"
+              residual_findings: "$.arguments.residual_findings"
+          advance:
+            title: Findings collected and budget-capped
+            target: dispatching
+            actor: agent
+            executor: { kind: noop }
+
+      dispatching:
+        goal: >
+          Hand `audit_findings` to the reusable propose+park tail in ONE dispatch
+          (the tail iterates the whole list itself — an empty list is fine, it
+          simply produces no proposals). `fix` dispatches
+          `flow.intent.propose_and_park`; its `applied` / `parked_tickets` /
+          `grounded_refs` outputs are projected back here, then on to `reporting`.
+        transitions:
+          fix:
+            title: Dispatch the budget-capped findings to flow.intent.propose_and_park
+            target: reporting
+            actor: agent
+            executor:
+              kind: workflow
+              definitionId: flow.intent.propose_and_park
+              use:
+                inputs:
+                  source_findings: "$.context.audit_findings"
+                  rationale: "uxos audit findings on the vetted surface"
+                outputs:
+                  "$.context.applied": applied
+                  "$.context.parked_tickets": parked_tickets
+                  "$.context.grounded_refs": grounded_refs
+
+      reporting:
+        goal: >
+          Emit the vet-and-fix report: `applied` (changes that landed),
+          `parked_tickets` (handed off for human approval), `grounded_refs` (the
+          real entity ids each proposal grounded on), and `residual_findings`
+          (findings beyond budget, for a follow-up run). Then finish.
+        transitions:
+          finish:
+            target: done
+            actor: agent
+            executor: { kind: noop }
+
+      done:
+        terminal: true

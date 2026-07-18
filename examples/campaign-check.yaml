@@ -1,0 +1,15 @@
+# examples/campaign-check.yaml
+# Minimal gateway config to structurally validate the merged campaign config.
+# `verify.cargo.cwd` and flow.refactor.god-file come from the cognitive
+# repos — include them here so cross-references resolve at check time.
+include:
+  - ../frontrails.yaml
+  - ../frontrails-campaign.yaml
+  - ../extensions/rust.yaml          # the Rust language extension (Task 3)
+  # Base cognitive repo supplies verify.cargo.cwd (the Rust `verify.build`),
+  # and (Phase 2) cognitive-architectures-max supplies flow.refactor.god-file.
+  # Adjust paths to your checkout.
+  - ../../cognitive-architectures/scripts-library/verify.cargo.cwd.yaml
+  # Tier-2 dependency: the god-file decomposition flow (referenced, not copied)
+  # and the scripts it uses live in the cognitive-architectures repos.
+  - ../../cognitive-architectures-max/orchestrators/flow.refactor.god-file.yaml

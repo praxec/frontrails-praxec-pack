@@ -1,0 +1,180 @@
+# frontrails-coordination.yaml
+# Additive coordination layer — deep-merges alongside frontrails.yaml (maps
+# merge, scalars: later wins), exactly like frontrails-campaign.yaml. Design
+# spec: docs/superpowers/specs/2026-07-17-praxec-coordination-foundation-design.md
+# §4.2. FrontRails itself is never modified.
+#
+# `flow.intent.propose_and_park` is the reusable, SOURCE-AGNOSTIC mutation
+# tail: any producer of findings (uxos audits today; StructureOS/SecurityOS
+# tomorrow) hands it an opaque `source_findings` list + a `rationale`, and it
+# drives them into IntentOS as grounded, parked proposals. Callers reference
+# it via `executor: { kind: workflow, definitionId: flow.intent.propose_and_park,
+# use: {...} }` — the same pattern frontrails-campaign.yaml's `refactoring`
+# state uses to call flow.refactor.god-file — id unprefixed, per this pack's
+# raw-`include:` convention (see that state's comment for why: neither `check`
+# nor `fuzz` validate a `kind: workflow` definitionId, only a live `command`
+# dispatch does, so the id must match whatever the consumer's `include:`
+# graph actually loaded).
+#
+# HAND-OFF BOUNDARY: this workflow PARKS, it never APPROVES. `intentos.propose`'s
+# async-HITL gate returns `status: pending_approval` + a `ticket_id` when no
+# human is reachable; this flow records the ticket and moves on to the next
+# finding — it structurally cannot mint the ApprovalToken that would apply the
+# change. A human approves the parked ticket later, out of band, through
+# IntentOS-desktop's own dialog (see frontrails.yaml's ASYNC-HITL note at the
+# top of that file).
+#
+# All three states are `actor: agent` (design §4.2): the running LLM drives
+# each hop explicitly by submitting one transition at a time — an
+# `actor: agent` transition does NOT auto-chain (confirmed live in Task 2's
+# spike; see docs/superpowers/notes/2026-07-17-praxec-output-binding.md). The
+# only capability calls in play are the three already exposed in
+# frontrails.yaml — `intentos.search_intent_harness`, `intentos.propose`,
+# `intentos.propose_status` — no journey/gate logic is re-encoded here; the
+# rest are plain bookkeeping (`kind: noop`) transitions that let the driving
+# agent persist its own accumulated arrays into this workflow's context.
+#
+# OUTPUT MECHANISM (Task-2 resolution, verified live + against source): a
+# `kind: workflow` caller's `use.outputs` reads a plain top-level key off THIS
+# workflow's own terminal context — no terminal script and no extra `output:`
+# block is needed on `reporting`'s `finish` transition. `parked_tickets` /
+# `applied` / `grounded_refs` are accumulated in context by this flow's own
+# `record*` bookkeeping transitions as the agent works through
+# `source_findings`, so by the time `reporting -> done` fires those three keys
+# already hold their final values, ready for the caller to project via
+# `use: { outputs: { "$.context.<caller_field>": <one of these three names> } }`.
+version: "1.0.0"
+
+workflows:
+  flow.intent.propose_and_park:
+    lifecycle: experimental
+    description: >
+      Reusable mutation tail: drive an opaque list of source findings into
+      IntentOS as grounded, parked proposals. Source-agnostic — any findings
+      producer (uxos, StructureOS, SecurityOS) can call this via a
+      `kind: workflow` transition + `use:` bindings. Never fabricates a
+      grounding id, never self-approves, never blocks on / retries a parked
+      ticket.
+    inputs:
+      # Real caller inputs (via `use.inputs` on the CALLER's `kind: workflow`
+      # transition). Per the global constraint, these are declared here — NOT
+      # seeded in `initialContext` below — because `initialContext` always
+      # wins over a caller-supplied `input.X` (praxec-core runtime.rs
+      # "initialContext wins"); seeding either key there would silently make
+      # a caller's `use.inputs` inert.
+      source_findings:
+        type: array
+        required: true
+      rationale:
+        type: string
+        required: false
+        default: ""
+    # Top-level outputs (flows have no `snippet:`) — these NAME the terminal
+    # context slots a `kind: workflow` parent reads via `use.outputs`. Declaring
+    # them lets praxec type a consumer's projection (SPEC §7.2); without this an
+    # INCLUDED consumer (e.g. flow.ux.vet-and-fix, frontrails-ux.yaml) fails
+    # check with UNKNOWN_CAP_OUTPUT_TARGET (a root-config consumer like
+    # examples/ux_vet_fix_min.yaml is validated leniently and does not).
+    outputs:
+      parked_tickets: { type: array }
+      applied:        { type: array }
+      grounded_refs:  { type: array }
+    initialState: grounding
+    initialContext:
+      # The three declared `use.outputs` accumulators (design §4.2). Seeded
+      # here (not in `inputs:`) because these are OUTPUTS this workflow
+      # produces, not caller-supplied inputs.
+      parked_tickets: []
+      applied: []
+      grounded_refs: []
+    # Caps runaway/token burn across a long source_findings list (design §4.2)
+    # — mirrors frontrails.yaml's frontrails_burndown (also a repeated-capability
+    # agent-driven loop).
+    maxChainDepth: 60
+    states:
+
+      grounding:
+        goal: >
+          For each finding in `source_findings`, call `search_intent_harness` to
+          resolve `target_hint` to a real entity id. Never fabricate an id; a
+          finding that cannot be grounded is recorded in `grounded_refs` as
+          unresolved and skipped.
+        transitions:
+          search:
+            target: grounding
+            actor: agent
+            executor: { capability: intentos.search_intent_harness }
+          record:
+            title: Persist the updated grounded_refs bookkeeping array
+            target: grounding
+            actor: agent
+            inputSchema:
+              type: object
+              required: [grounded_refs]
+              properties:
+                grounded_refs: { type: array }
+            executor: { kind: noop }
+            output:
+              grounded_refs: "$.arguments.grounded_refs"
+          advance:
+            title: All source_findings have been resolved or recorded as unresolved
+            target: proposing
+            actor: agent
+            executor: { kind: noop }
+
+      proposing:
+        goal: >
+          Call `propose` with the change grounded in the real id(s) + `rationale`.
+          On `status=pending_approval`, append `ticket_id` to `parked_tickets` and
+          continue. Never block, never retry a parked change, never self-approve.
+          If a change applied synchronously, append its summary to `applied`.
+        transitions:
+          propose:
+            target: proposing
+            actor: agent
+            executor: { capability: intentos.propose }
+          propose_status:
+            title: Optionally poll a previously parked ticket (never to retry/approve it)
+            target: proposing
+            actor: agent
+            executor: { capability: intentos.propose_status }
+          record_parked:
+            title: Persist the updated parked_tickets bookkeeping array
+            target: proposing
+            actor: agent
+            inputSchema:
+              type: object
+              required: [parked_tickets]
+              properties:
+                parked_tickets: { type: array }
+            executor: { kind: noop }
+            output:
+              parked_tickets: "$.arguments.parked_tickets"
+          record_applied:
+            title: Persist the updated applied bookkeeping array
+            target: proposing
+            actor: agent
+            inputSchema:
+              type: object
+              required: [applied]
+              properties:
+                applied: { type: array }
+            executor: { kind: noop }
+            output:
+              applied: "$.arguments.applied"
+          advance:
+            title: All source_findings have been proposed, parked, or applied
+            target: reporting
+            actor: agent
+            executor: { kind: noop }
+
+      reporting:
+        goal: Emit `parked_tickets` / `applied` / `grounded_refs` and terminate.
+        transitions:
+          finish:
+            target: done
+            actor: agent
+            executor: { kind: noop }
+
+      done:
+        terminal: true

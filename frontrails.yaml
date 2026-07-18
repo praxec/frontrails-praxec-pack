@@ -2,10 +2,29 @@
 # Consumers merge this via `include:`. FrontRails itself is never modified.
 #
 # Each FrontRails MCP server exposes ONE tool (intentos / structureos /
-# securityos) that takes an `action` discriminator + `params`. So each ACTION
-# becomes its own Flowgate capability: it calls the one tool with a fixed
+# securityos / uxos) that takes an `action` discriminator + `params`. So each
+# ACTION becomes its own Flowgate capability: it calls the one tool with a fixed
 # `action` and templates the caller's `params` in via `$.arguments.params`.
-version: "1.0.0"
+#
+# The binding key is `map:` — NOT `arguments:`. The `mcp` executor reads only
+# `connection` + `tool` + `map` (see praxec docs/authoring-reference.md; the
+# executor literally does `cfg.get("map")`). An `arguments:` block is silently
+# IGNORED, and with no `map:` the caller's raw args pass straight through — so
+# the pinned `action` never reaches the tool and every call is malformed. That
+# was the v1.2.0 bug. `map:` resolves recursively, so a nested `params: { … }`
+# object mixing literals and `$.` paths is the correct shape.
+#
+# ASYNC-HITL (FrontRails 0.0.17): mutating IntentOS actions are human-gated.
+# When a mutation cannot reach a human — as in this headless/agent context —
+# `propose`, `review_strategy` and `request_full_review` no longer wedge or
+# fail closed: they PARK the change as a durable approval ticket and return
+# `status: "pending_approval"` + a `ticket_id`. The change is NOT applied until
+# a human approves it through IntentOS's own dialog channel (an agent
+# structurally cannot self-approve — that gate stays authoritative here). Poll
+# the ticket with `intentos.propose_status { ticket_id }`; a burn-down loop
+# should surface the ticket_id and move on to other worklist items rather than
+# block. See the `intentos.propose_status` capability and the workflow goals.
+version: "1.3.0"
 
 connections:
   intentos:
@@ -33,6 +52,15 @@ connections:
     env:
       SECURITYOS_WORKSPACE_ROOT: "."
 
+  # uxos (UX conformance) MCP server. `uxos-mcp` serves over stdio with no
+  # subcommand. Like the other *os servers it exposes ONE tool (`uxos`) taking
+  # an `action` discriminator + `params`.
+  uxos:
+    kind: mcp
+    command: "uxos-mcp"
+    env:
+      UXOS_WORKSPACE_ROOT: "."
+
 capabilities:
   intentos.status:
     title: "IntentOS — spec status, diagnostics, next steps"
@@ -45,7 +73,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "status"
 
   intentos.search_intent_harness:
@@ -60,7 +88,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "search_intent_harness"
         params: "$.arguments.params"
 
@@ -77,7 +105,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "propose"
         params: "$.arguments.params"
 
@@ -93,7 +121,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "navigate"
         params: "$.arguments.params"
 
@@ -109,8 +137,29 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "finish"
+        params: "$.arguments.params"
+
+  intentos.simulate_and_project:
+    title: "IntentOS — run Preveti/Simuli and project into the compass"
+    description: >
+      Start a Preveti/Simuli simulation run, wait for it, and project the vetted
+      result into the OpportunityCompass (evidence-first, via the fail-closed
+      compass_write gate). params: { objective: string, audience_json: object,
+      spec_path?: string, external_id?: string }. Network + write.
+    tags: [intentos, write, preveti]
+    inputSchema:
+      type: object
+      required: [params]
+      properties:
+        params: { type: object }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      map:
+        action: "simulate_and_project"
         params: "$.arguments.params"
 
   intentos.worklist:
@@ -129,7 +178,7 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "worklist"
         params: "$.arguments.params"
 
@@ -149,8 +198,35 @@ capabilities:
       kind: mcp
       connection: intentos
       tool: "intentos"
-      arguments:
+      map:
         action: "certify"
+        params: "$.arguments.params"
+
+  intentos.propose_status:
+    title: "IntentOS — poll an async approval ticket (park → apply status)"
+    description: >
+      Read-only poll of a durable approval ticket. When a mutating action cannot
+      reach a human it PARKS the change and returns status=pending_approval + a
+      ticket_id instead of applying synchronously (see the ASYNC-HITL note at the
+      top of this pack). Call propose_status with that ticket_id to read the
+      outcome: pending (awaiting human approval), applied (carries the full result
+      payload), rejected, failed, or expired. With no ticket_id it lists all
+      pending tickets. This handler has NO write path — it can never approve or
+      transition a ticket (approval flows only through the human-only dialog).
+    tags: [intentos, read]
+    inputSchema:
+      type: object
+      properties:
+        params:
+          type: object
+          properties:
+            ticket_id: { type: string }
+    executor:
+      kind: mcp
+      connection: intentos
+      tool: "intentos"
+      map:
+        action: "propose_status"
         params: "$.arguments.params"
 
   # --- StructureOS (code structure) ---
@@ -169,7 +245,7 @@ capabilities:
       kind: mcp
       connection: structureos
       tool: "structureos"
-      arguments:
+      map:
         action: "scan_repo"
         params: "$.arguments.params"
 
@@ -185,7 +261,7 @@ capabilities:
       kind: mcp
       connection: structureos
       tool: "structureos"
-      arguments:
+      map:
         action: "get_diagnostics"
         params: "$.arguments.params"
 
@@ -202,7 +278,7 @@ capabilities:
       kind: mcp
       connection: structureos
       tool: "structureos"
-      arguments:
+      map:
         action: "move"
         params: "$.arguments.params"
 
@@ -221,23 +297,174 @@ capabilities:
       kind: mcp
       connection: securityos
       tool: "securityos"
-      arguments:
+      map:
         action: "scan"
         params: "$.arguments.params"
+
+  # --- uxos (UX conformance) ---
+  # CONFORMANCE verbs, not intentos clones: intentos AUTHORS intent, uxos
+  # COMPUTES how understandable/operable a realization is. Every uxos verb is
+  # read-only (it evaluates a model, never mutates a spec), so none is gated.
+  uxos.extract:
+    title: "uxos — extract a UX-IR from a raw capture (DOM / a11y tree)"
+    description: >
+      Deterministically turn an HTML document (`html`) or a CDP accessibility tree
+      (`a11y_tree`) into a validated UX-IR over the structural projection, with a
+      provenance trail so the capture is re-hashable for drift. The starting point
+      before conform/audit on a real page.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      properties:
+        html: { type: string }
+        a11y_tree: { type: string }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "uxos"
+      map:
+        action: "extract"
+        params:
+          html: "$.arguments.html"
+          a11y_tree: "$.arguments.a11y_tree"
+
+  uxos.conform:
+    title: "uxos — run all quality rules (verdicts with epistemic class + dimension)"
+    description: >
+      Evaluate every quality rule against the UX-IR and return verdicts, each tagged
+      deterministic vs advisory (a verdict touching any LLM-inferred input is advisory)
+      and named by dimension. Enumerates dimensions NOT covered so a clean run can't
+      hide a blind spot. Also reports dead ends + flow gaps.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "uxos"
+      map:
+        action: "conform"
+        params:
+          ir: "$.arguments.ir"
+
+  uxos.scan_dark_patterns:
+    title: "uxos — dark-patterns-structural@1 (sneaking/nagging/forced-action/preselection)"
+    description: >
+      Run the structural dark-patterns pack. Each finding is a topological fact with an
+      inspectable rationale (a modal that dominates a required flow = forced-action; a
+      choice control defaulting opt-in = preselection; …) — a deterministic verdict, not
+      an opinion.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "uxos"
+      map:
+        action: "scan_dark_patterns"
+        params:
+          ir: "$.arguments.ir"
+
+  uxos.audit:
+    title: "uxos — audit an experience (conformance + completeness ladder + dark patterns)"
+    description: >
+      One-shot rollup: all verdicts, the D5-inverted quantified completeness ladder
+      (highest reached rung + per-rung shortfall; behavior is the floor, screens a
+      realization tier above it), and the structural dark-patterns pack. The headline
+      "how good is this experience" verb.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "uxos"
+      map:
+        action: "audit"
+        params:
+          ir: "$.arguments.ir"
+
+  uxos.check_coverage:
+    title: "uxos — crossmatrix drift vs intent (stale / orphan / uncovered)"
+    description: >
+      The intent↔ux federation drift report: given the crossmatrix engine's mapping
+      cells and a coverage policy (kinds that must be mapped), return the three distinct
+      findings — stale (a cited member's content changed), orphan (a cited member is
+      gone), uncovered (a required member no cell maps). uxos never holds the mappings;
+      it re-computes drift against its current roster.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [ir]
+      properties:
+        ir: { type: object }
+        cells: { type: array, items: { type: object } }
+        require_covered_kinds: { type: array, items: { type: string } }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "uxos"
+      map:
+        action: "check_coverage"
+        params:
+          ir: "$.arguments.ir"
+          cells: "$.arguments.cells"
+          require_covered_kinds: "$.arguments.require_covered_kinds"
+
+  uxos.compare:
+    title: "uxos — structural diff of two captures (regression surface)"
+    description: >
+      Diff two UX-IR captures by member content hash: added / removed / changed node
+      ids. The muscle-memory / regression surface across two snapshots of the same
+      surface.
+    tags: [uxos, read]
+    inputSchema:
+      type: object
+      required: [before, after]
+      properties:
+        before: { type: object }
+        after: { type: object }
+    executor:
+      kind: mcp
+      connection: uxos
+      tool: "uxos"
+      map:
+        action: "compare"
+        params:
+          before: "$.arguments.before"
+          after: "$.arguments.after"
 
 proxy:
   expose:
     - { capability: intentos.status, tags: [primary], aliases: [status, health] }
     - { capability: intentos.search_intent_harness, aliases: [search, ground] }
     - { capability: intentos.propose, tags: [primary], aliases: [propose, change] }
+    - { capability: intentos.propose_status, aliases: [propose_status, ticket, poll] }
     - { capability: intentos.navigate, aliases: [navigate, position] }
     - { capability: intentos.worklist, tags: [primary], aliases: [worklist, frontier, todo] }
     - { capability: intentos.certify, tags: [primary], aliases: [certify, gate] }
     - { capability: intentos.finish, aliases: [finish, close] }
+    - { capability: intentos.simulate_and_project, aliases: [simulate, preveti, compass_populate] }
     - { capability: structureos.scan_repo, tags: [primary], aliases: [scan, scan_repo] }
     - { capability: structureos.get_diagnostics, aliases: [diagnostics, structure_diagnostics] }
     - { capability: structureos.move, tags: [primary], aliases: [move, refactor] }
     - { capability: securityos.scan, tags: [primary], aliases: [security_scan] }
+    - { capability: uxos.extract, aliases: [extract, capture] }
+    - { capability: uxos.conform, aliases: [conform] }
+    - { capability: uxos.scan_dark_patterns, aliases: [dark_patterns] }
+    - { capability: uxos.audit, tags: [primary], aliases: [audit, ux_audit] }
+    - { capability: uxos.check_coverage, aliases: [ux_coverage, crossmatrix_drift] }
+    - { capability: uxos.compare, aliases: [ux_compare] }
 
 workflows:
   frontrails_spec:
@@ -249,13 +476,49 @@ workflows:
     maxChainDepth: 50
     states:
       working:
-        goal: Follow IntentOS _required/_available hints until the spec is healthy.
+        goal: >
+          Follow IntentOS _required/_available hints until the spec is healthy. If a
+          propose returns status=pending_approval it parked an approval ticket (no human
+          reachable here) — record the ticket_id, poll it with propose_status, and move
+          on; a human approves it through IntentOS's own dialog. Do not treat a parked
+          ticket as failure.
         transitions:
-          status:   { target: working, actor: agent, executor: { capability: intentos.status } }
-          search:   { target: working, actor: agent, executor: { capability: intentos.search_intent_harness } }
-          propose:  { target: working, actor: agent, executor: { capability: intentos.propose } }
-          navigate: { target: working, actor: agent, executor: { capability: intentos.navigate } }
-          finish:   { target: done, actor: agent, executor: { capability: intentos.finish } }
+          status:         { target: working, actor: agent, executor: { capability: intentos.status } }
+          search:         { target: working, actor: agent, executor: { capability: intentos.search_intent_harness } }
+          propose:        { target: working, actor: agent, executor: { capability: intentos.propose } }
+          propose_status: { target: working, actor: agent, executor: { capability: intentos.propose_status } }
+          navigate:       { target: working, actor: agent, executor: { capability: intentos.navigate } }
+          finish:         { target: done, actor: agent, executor: { capability: intentos.finish } }
+      done:
+        terminal: true
+
+  frontrails_ux_conformance:
+    description: >
+      Assess the UX conformance of a real surface with uxos. From a raw capture
+      (html / a11y_tree) extract a UX-IR, then audit it (conformance + completeness
+      ladder + dark patterns). uxos verbs are read-only — this workflow computes and
+      reports; it never mutates a spec. The running LLM decides whether to drill into
+      dark patterns or coverage after the audit.
+    initialState: assessing
+    maxChainDepth: 20
+    states:
+      assessing:
+        goal: >
+          If given a raw capture, call `extract` to get a UX-IR first. Then call `audit`
+          on the IR for the full rollup (verdicts by epistemic class + dimension, the
+          completeness ladder's highest reached rung, and structural dark patterns).
+          Drill in with `dark_patterns` or `conform` for detail, or `ux_coverage` to
+          check drift against intent. Report findings; do not fabricate numbers — every
+          verdict already carries whether it is deterministic or advisory. Call `report`
+          when the assessment is complete.
+        transitions:
+          extract:       { target: assessing, actor: agent, executor: { capability: uxos.extract } }
+          audit:         { target: assessing, actor: agent, executor: { capability: uxos.audit } }
+          conform:       { target: assessing, actor: agent, executor: { capability: uxos.conform } }
+          dark_patterns: { target: assessing, actor: agent, executor: { capability: uxos.scan_dark_patterns } }
+          ux_coverage:   { target: assessing, actor: agent, executor: { capability: uxos.check_coverage } }
+          ux_compare:    { target: assessing, actor: agent, executor: { capability: uxos.compare } }
+          report:        { target: done, actor: agent }
       done:
         terminal: true
 
@@ -280,12 +543,18 @@ workflows:
           Then loop: call `worklist` again to re-rank. Never force a change onto attested
           intent — write-protection diverts such proposals to candidates; surface the
           captured candidate rather than retrying. Prefer gate_eligible items first.
+          If a propose returns status=pending_approval it parked an approval ticket (no
+          human reachable in this loop): record the ticket_id, optionally poll it with
+          propose_status, and continue burning down OTHER worklist items — do not block
+          on or retry the parked change. A human applies it later through IntentOS's
+          dialog; certify will not report passed=true until it is approved and applied.
         transitions:
-          worklist: { target: burndown, actor: agent, executor: { capability: intentos.worklist } }
-          certify:  { target: burndown, actor: agent, executor: { capability: intentos.certify } }
-          search:   { target: burndown, actor: agent, executor: { capability: intentos.search_intent_harness } }
-          navigate: { target: burndown, actor: agent, executor: { capability: intentos.navigate } }
-          propose:  { target: burndown, actor: agent, executor: { capability: intentos.propose } }
-          finish:   { target: done, actor: agent, executor: { capability: intentos.finish } }
+          worklist:       { target: burndown, actor: agent, executor: { capability: intentos.worklist } }
+          certify:        { target: burndown, actor: agent, executor: { capability: intentos.certify } }
+          search:         { target: burndown, actor: agent, executor: { capability: intentos.search_intent_harness } }
+          navigate:       { target: burndown, actor: agent, executor: { capability: intentos.navigate } }
+          propose:        { target: burndown, actor: agent, executor: { capability: intentos.propose } }
+          propose_status: { target: burndown, actor: agent, executor: { capability: intentos.propose_status } }
+          finish:         { target: done, actor: agent, executor: { capability: intentos.finish } }
       done:
         terminal: true

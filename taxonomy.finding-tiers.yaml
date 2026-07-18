@@ -1,0 +1,20 @@
+# taxonomy.finding-tiers.yaml
+# Canonical StructureOS finding-code -> tier -> treatment table (spec §5).
+# Human-facing source of truth. Flows encode the codes relevant to their tier
+# in `initialContext`, consistent with this table. Unknown codes default to
+# tier 3 (report) — never auto-mutated.
+version: "1.0.0"
+default_tier: 3
+tiers:
+  "1":
+    name: safe-auto-fix
+    treatment: cargo-fix           # deterministic, compiler-verified; no LLM
+    codes: [SOS027]                # unused_imports
+  "2":
+    name: structural-refactor
+    treatment: refactor-subflow    # cognitive-max/flow.refactor.god-file (Phase 2)
+    codes: [SOS001]                # god_files
+  "3":
+    name: advisory-report
+    treatment: report              # read-only; optional human dismiss-with-rationale
+    codes: [SOS025, SOS014, SOS020, SOS103, SOS010, SOS012, SOS016, SOS028, SOS037, SOS061]

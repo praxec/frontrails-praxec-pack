@@ -1,0 +1,4 @@
+# Check harness for sub-project B (flow.strategy.populate-compass).
+include:
+  - ../frontrails.yaml
+  - ../frontrails-strategy.yaml

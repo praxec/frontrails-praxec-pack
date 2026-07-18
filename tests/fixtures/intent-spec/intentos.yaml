@@ -1,0 +1,24 @@
+metadata:
+  id: spec.dev-cost-controls
+  version: 0.1.0
+  status: draft
+actors:
+- id: actor.developer
+  name: Developer
+  role: job_executor
+  notes: |
+    Cost-conscious developer managing CI/build spend — the fixture actor for the coordination-foundation E2E (uxos audit -> propose_and_park). Not a shopper/consumer persona.
+product_jobs:
+- id: job.control-build-cost
+  verb: control
+  object: CI/build spend
+  title: Control Build Cost
+  description: |
+    The developer reviews CI/build spend and adjusts cost controls to keep it within budget.
+requirements:
+- id: req.operable-controls
+  level: MUST
+  statement: Every interactive control in the CI cost-controls view has an accessible name.
+  rationale: |
+    uxos flags icon-only buttons with no accessible name; this is the expected grounding target for a parked proposal raised from a uxos audit finding.
+_file_hmac: 0dd1b53070967f6ca53f646b35257b56c3b4c220341f635e5802c9c4b5faaf33
