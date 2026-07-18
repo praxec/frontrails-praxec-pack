@@ -1,0 +1,131 @@
+# frontrails-strategy.yaml
+# Sub-project B — Preveti/Simuli → IntentOS strategic/compass population.
+# Additive; deep-merges alongside frontrails.yaml (like frontrails-campaign.yaml).
+# Design spec: docs/superpowers/specs/2026-07-17-operationalize-b-c-design.md §4.1.
+# FrontRails itself is never modified.
+#
+# `flow.strategy.populate-compass` drives a Preveti/Simuli run and surfaces what
+# it projected into the IntentOS OpportunityCompass. It wraps the exposed
+# `intentos.simulate_and_project` capability (frontrails.yaml), which is a NETWORK
+# handler: start_run(objective, audience_json) -> await_run (<=120s) -> project_run
+# -> persist compass indicators + actors through the fail-closed compass_write
+# gate (evidence-first, origin: simuli). This workflow does NOT re-decide that
+# gate or the projection logic — both stay authoritative in FrontRails / Simuli;
+# it only drives the run and REPORTS what landed (read-only after the sim call).
+#
+# LIVE PREVETI REQUIRED (owner decision — proven against real Preveti, not mocked).
+# The `intentos` connection must be launched with:
+#   PREVETI_BASE_URL   e.g. http://localhost:8080   (Preveti REST API)
+#   PREVETI_API_KEY    e.g. demo.preveti-demo-key   (a full-tier key; sim_host
+#                      SEED_DEMO=1 seeds exactly this one for local dev)
+# Without them `simulate_and_project` errs gracefully (never panics). See
+# tests/preveti-compass-e2e.md for the local stand-up (sim_host in-memory).
+#
+# States `actor: agent` (the LLM drives each hop). Capabilities are all already
+# exposed in frontrails.yaml: `intentos.simulate_and_project`, `intentos.status`,
+# `intentos.search_intent_harness`. Bookkeeping is `kind: noop` with
+# `output: {k: "$.arguments.k"}` — same idiom as the coordination tail.
+version: "1.0.0"
+
+workflows:
+  flow.strategy.populate-compass:
+    lifecycle: experimental
+    description: >
+      Populate the IntentOS OpportunityCompass from a Preveti/Simuli run: call
+      simulate_and_project with an objective + audience, then read back and report
+      the projected compass segments / arena / errc moves / actors. Read-only
+      after the sim call — the compass_write gate and the Simuli projection stay
+      authoritative.
+    inputs:
+      # The product/market objective to simulate. Declared here with a default
+      # (NOT in initialContext) so a caller's `input.objective` is honored.
+      objective:
+        type: string
+        required: false
+        default: "reduce CI/build cost friction for cost-conscious developers"
+      # Audience / cohort descriptor passed straight to Preveti start_run.
+      audience_json:
+        type: object
+        required: false
+        default: {}
+    initialState: simulating
+    initialContext:
+      run_id: ""
+      projected_summary: {}
+      compass_entities: []
+    maxChainDepth: 20
+    states:
+
+      simulating:
+        goal: >
+          Call `simulate_and_project` with `{ objective: $.context.objective,
+          audience_json: $.context.audience_json }`. It runs Preveti (may take up
+          to ~120s) and persists the projection into the compass. Capture its
+          `run_id` and `summary` and record them via `record`, then `advance`. If
+          it errs (e.g. PREVETI_API_KEY unset / endpoint unreachable), report the
+          error and finish — do not retry blindly.
+        transitions:
+          simulate:
+            target: simulating
+            actor: agent
+            executor: { capability: intentos.simulate_and_project }
+          record:
+            title: Persist run_id + projected_summary from the sim result
+            target: simulating
+            actor: agent
+            inputSchema:
+              type: object
+              required: [run_id, projected_summary]
+              properties:
+                run_id: { type: string }
+                projected_summary: { type: object }
+            executor: { kind: noop }
+            output:
+              run_id: "$.arguments.run_id"
+              projected_summary: "$.arguments.projected_summary"
+          advance:
+            title: Simulation persisted — go read back what landed
+            target: reporting
+            actor: agent
+            executor: { kind: noop }
+
+      reporting:
+        goal: >
+          Surface what the run populated. The projected compass counts
+          (segments / arena_frames / errc_moves / actors) are already in the sim
+          `summary` captured as `projected_summary` — the compass entities live in
+          the OpportunityCompass (compass.yaml), NOT the intent harness, so
+          `search_intent_harness` will NOT list arena/segment/errc frames (it
+          covers harness entities). Call `status` to confirm the compass/gate
+          state, and use `search` only to surface any projected `actor` entities
+          (those DO land in the harness). Record the entity ids you can see as
+          `compass_entities` via `record`, then finish. Do not mutate — read-back
+          report; the projected counts come from `projected_summary`.
+        transitions:
+          status:
+            target: reporting
+            actor: agent
+            executor: { capability: intentos.status }
+          search:
+            target: reporting
+            actor: agent
+            executor: { capability: intentos.search_intent_harness }
+          record:
+            title: Persist the projected compass entity ids
+            target: reporting
+            actor: agent
+            inputSchema:
+              type: object
+              required: [compass_entities]
+              properties:
+                compass_entities: { type: array }
+            executor: { kind: noop }
+            output:
+              compass_entities: "$.arguments.compass_entities"
+          finish:
+            target: done
+            actor: agent
+            executor: { kind: noop }
+
+      done:
+        terminal: true
