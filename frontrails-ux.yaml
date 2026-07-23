@@ -62,6 +62,19 @@ workflows:
         type: array
         required: false
         default: []
+    # Top-level outputs (flows have no `snippet:`) — these NAME the terminal
+    # context slots a `kind: workflow` parent reads via `use.outputs`, exactly
+    # like flow.intent.propose_and_park's own outputs block
+    # (frontrails-coordination.yaml): without this an INCLUDED consumer
+    # (flow.ux.premium-optimize, frontrails-ux-premium.yaml) fails check with
+    # UNKNOWN_CAP_OUTPUT_TARGET. applied / parked_tickets / grounded_refs are
+    # written by `dispatching.fix`'s use.outputs projection; residual_findings
+    # is seeded in initialContext and overwritten by `auditing.record`.
+    outputs:
+      applied:           { type: array }
+      parked_tickets:    { type: array }
+      grounded_refs:     { type: array }
+      residual_findings: { type: array }
     initialState: auditing
     initialContext:
       # residual_findings is only referenced in prose (reporting goal), never via

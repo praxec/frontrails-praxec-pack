@@ -1,0 +1,12 @@
+# Check harness for the premium UX optimization tier
+# (flow.ux.premium-optimize). The premium flow dispatches BOTH the shipped
+# coordination tail (flow.intent.propose_and_park) and the shipped uxos
+# vet-and-fix flow (flow.ux.vet-and-fix), so it needs all three base files.
+# The commodity cognitive-science tier is NOT included: its verified findings
+# arrive as the `commodity_findings` INPUT (see the header of
+# ../frontrails-ux-premium.yaml for why no cross-pack definitionId is used).
+include:
+  - ../frontrails.yaml
+  - ../frontrails-coordination.yaml
+  - ../frontrails-ux.yaml
+  - ../frontrails-ux-premium.yaml
