@@ -264,6 +264,39 @@ C dispatches the foundation tail, so its consumer includes
 (`include:` convention); `check`/`fuzz` don't validate `kind: workflow`
 resolution — a live drive does.
 
+## Premium UX optimization (intent persistence + conformance)
+
+**`flow.ux.premium-optimize`** (`frontrails-ux-premium.yaml`) is the paid-tier
+workflow layered on top of the commodity cognitive-science UX method
+(cognitive-architectures[-max] `flow.ux.optimize` + the `review.ux.analyze.*`
+principle skills — which this pack deliberately does NOT duplicate):
+
+- **Recall-before-ask intent persistence** — `recalling` searches IntentOS for
+  previously persisted `product_job` / `journey` / `state` intent; only when
+  none covers the surface does the rich-context human gate (`eliciting`, V36
+  push-compatible: primitives only) ask for persona / mental model / JTBD
+  spine, and `persisting` drives the answers into IntentOS via the shipped
+  `flow.intent.propose_and_park` tail. Elicitation is captured **once** and
+  reused across runs.
+- **Reuse, not re-encode** — the uxos vet stage is the shipped
+  `flow.ux.vet-and-fix`, dispatched as a nested workflow (id unprefixed,
+  `include:` convention); that flow now declares its `outputs:` so the
+  premium projection types under SPEC §7.2.
+- **Commodity findings as INPUT** — the commodity tier's verified findings log
+  arrives via the `commodity_findings` input and is re-shaped into a second
+  tail dispatch, grounded on the persisted persona intent. No cross-pack
+  `kind: workflow` id is used: this pack raw-`include:`s (unprefixed ids)
+  while the cognitive packs are `repos:`-mounted (`cognitive-max/*`), and
+  `check`/`fuzz` can't validate a `definitionId` — data hand-off is
+  mount-mode-proof (see the file header + the Tier-2 id note above).
+- **uxos conformance verification stage** — `conforming` runs read-only
+  `uxos.conform` (+ optional `check_coverage` drift vs the persisted intent
+  and a StructureOS scan/diagnostics pass) after the fixes are proposed.
+
+All propose outcomes are recorded as applied vs parked (three-outcomes
+reality); the flow never self-approves. Check harness:
+`examples/ux-premium-check.yaml`.
+
 ## Tests
 
 See `tests/README.md` for the manual / CI-gated E2E. Its acceptance includes
