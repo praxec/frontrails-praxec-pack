@@ -1,0 +1,454 @@
+# frontrails-ux-premium.yaml
+# PREMIUM-tier UX optimization — additive; deep-merges alongside
+# frontrails.yaml + frontrails-coordination.yaml + frontrails-ux.yaml (maps
+# merge, scalars later-wins), like frontrails-campaign.yaml. FrontRails itself
+# is never modified.
+#
+# TWO-TIER STRATEGY. The commodity tier (cognitive-architectures[-max]:
+# flow.ux.optimize + the review.ux.analyze.* principle skills — hick, fitts,
+# miller, cognitive-load, nielsen, gestalt, jtbd-friction) already provides the
+# per-principle cognitive-science analysis layer: matrix fan-out, per-cell
+# analysis, per-surface falsification, FMECA gate, scope-bounded implement.
+# THIS premium flow does NOT duplicate any of that. It layers the paid
+# FrontRails tools on top:
+#   (a) PERSISTENCE — elicited persona/JTBD/mental-model intent is proposed
+#       into IntentOS as product_job / journey / state entities via the shipped
+#       coordination tail (flow.intent.propose_and_park), so elicitation is
+#       captured ONCE and recalled on every later run instead of re-asked;
+#   (b) uxos CONFORMANCE — a read-only verification stage (conform + coverage
+#       + optional StructureOS structural check) after the fixes are proposed;
+#   (c) COMPOSITION — the commodity tier's VERIFIED findings arrive as an
+#       INPUT (`commodity_findings`), not a cross-pack `kind: workflow`
+#       dispatch. Rationale (grounded in flow.findings.structural's
+#       `refactoring` comment + README "Note on the referenced id"): this pack
+#       is consumed by raw `include:` (ids unprefixed) while the cognitive
+#       packs are `repos:`-mounted (ids prefixed `cognitive-max/*`), and
+#       neither `check` nor `fuzz` validates a `kind: workflow` definitionId —
+#       a cross-pack id here would be silently wrong in one of the two mount
+#       modes and fail only at live dispatch. Handing the findings log across
+#       as data is mount-mode-proof.
+#
+# REUSE. The uxos vetting stage is NOT re-encoded: this flow dispatches the
+# shipped `flow.ux.vet-and-fix` (frontrails-ux.yaml) as a nested workflow —
+# id unprefixed per this pack's raw-`include:` convention (same as that flow
+# itself references flow.intent.propose_and_park). The IntentOS mutation path
+# is likewise the shipped tail, dispatched twice with different payloads:
+# once with the elicited-intent entities, once with the commodity findings.
+#
+# THREE-OUTCOMES REALITY (verified live, foundation E2E): every propose the
+# tail makes is `approved` (applies), `pending_approval` (parks a durable
+# ticket), or `needs_review`. This flow RECORDS whichever outcome the tail
+# reports — it never self-approves and never fabricates a grounding id.
+#
+# HUMAN GATE (V36 discipline): the elicitation gate collects PRIMITIVES only
+# (strings), so it stays push-elicitation-compatible — a non-primitive
+# property alongside `required:` makes the gate unresolvable by a push form
+# (ELICITATION_INCOMPATIBLE_GATE). The agent re-shapes the primitive answers
+# into structured entities afterwards. Per the dogfooding finding on
+# context-free gates, the gate's goal carries the full context: what is being
+# asked, why it is being asked, and what happens with the answer.
+#
+# All non-gate states `actor: agent` (the running LLM drives each hop; no
+# auto-chain). Bookkeeping is `kind: noop` with `output: {k: "$.arguments.k"}`
+# (praxec mapping has no array-append; the agent resubmits whole values —
+# same idiom as flow.ux.vet-and-fix and the coordination tail).
+version: "1.0.0"
+
+workflows:
+  flow.ux.premium-optimize:
+    lifecycle: experimental
+    description: >
+      Premium-tier UX optimization: recall (or elicit ONCE and persist into
+      IntentOS) the persona/JTBD/mental-model intent for a surface, vet the
+      surface with uxos and drive its findings into IntentOS via the shipped
+      flow.ux.vet-and-fix, intake the commodity cognitive-science tier's
+      verified findings as grounded IntentOS proposals, then run a uxos
+      conformance + structural verification pass and report. Composes with —
+      never duplicates — the cognitive-architectures(-max) per-principle
+      analysis layer; its findings log arrives as the `commodity_findings`
+      input. Records applied vs parked outcomes; never self-approves.
+    inputs:
+      # The captured surface (raw HTML or a11y tree) for the vet + conformance
+      # stages — same contract as flow.ux.vet-and-fix.
+      capture_html:
+        type: string
+        required: true
+      # Forwarded to flow.ux.vet-and-fix: max uxos findings dispatched to the
+      # propose tail per run. Declared here with a default (NOT seeded in
+      # initialContext) so a caller's `input.budget` is honored — an
+      # initialContext literal would make it inert ("initialContext wins").
+      budget:
+        type: integer
+        required: false
+        default: 3
+      # The commodity tier's VERIFIED findings (cognitive-architectures[-max]
+      # flow.ux.optimize stage-4 output: elements shaped like { surface,
+      # principle, element, mechanism, jtbd_step, user_cost, evidence,
+      # suggested_fix, severity_hint }). Opaque here — the `intake` state
+      # re-shapes them into the tail's { target_hint, detail } elements.
+      # Empty (the default) = no commodity run to compose with; intake skips.
+      commodity_findings:
+        type: array
+        required: false
+        default: []
+      # Free-text hint for recalling previously persisted intent (e.g. the
+      # surface/product area name). Read by the `recalling` goal prose only.
+      surface_hint:
+        type: string
+        required: false
+        default: ""
+      # Internal slots, not real caller inputs — declared here (with defaults)
+      # so V13 (SPEC §7.3) treats them as reachable where the two tail
+      # dispatches reference them via `use.inputs`. A `kind: noop` `output:`
+      # write does NOT satisfy V13 reachability, and `initialContext` seeding
+      # does not either — only an `inputs:` declaration or a `kind: workflow`
+      # `use.outputs` write does (same shape as flow.ux.vet-and-fix's
+      # `audit_findings`).
+      intent_findings:
+        type: array
+        required: false
+        default: []
+      commodity_proposals:
+        type: array
+        required: false
+        default: []
+    initialState: recalling
+    initialContext:
+      # Guard-read flag: seeded so `intent_gate`'s guards always see a defined
+      # boolean (same discipline as flow.findings.sweep-safe's build_passed).
+      # Overwritten by `recalling.record`.
+      intent_known: false
+      # The persisted-intent entities recalled from IntentOS (real ids), or []
+      # when none exist yet.
+      recalled_intent: []
+      # Elicited primitives (written by the human gate's output binding on the
+      # elicitation path; stay "" on the reuse path).
+      persona_id: ""
+      persona_mental_model: ""
+      persona_jtbd_spine: ""
+      persona_ancillary_journeys: ""
+      persona_key_states: ""
+      # Conformance-stage rollup (overwritten by `conforming.record`).
+      conformance_summary: {}
+      # The per-dispatch tail outcomes (intent_* / ux_* / commodity_*) are
+      # intentionally NOT seeded: a `use.outputs` projection into a
+      # PRE-declared slot makes praxec type it against the child's output
+      # (SPEC §7.2); left unseeded each projection creates its slots fresh —
+      # same rationale as flow.ux.vet-and-fix's initialContext note.
+    maxChainDepth: 60
+    states:
+
+      # ── (a) PERSISTENCE, read side: recall before you ask ────────────────
+      recalling:
+        goal: >
+          Check whether this surface's user intent was already elicited and
+          persisted. Call `search` (intentos.search_intent_harness) with
+          `{ params: { filter: { entity_type: ["product_job", "journey",
+          "state"] } } }` — optionally narrowed by `$.context.surface_hint` —
+          and inspect the hits for a persona/JTBD context covering this
+          surface. If real entities cover it, `record` them (their REAL ids)
+          as `recalled_intent` with `intent_known: true` — elicitation is
+          captured once and reused across runs; do NOT re-ask a human for
+          intent that already exists. If nothing (or only partial coverage)
+          exists, `record` `intent_known: false` with whatever partial ids
+          were found. Never fabricate an entity id. Then `advance`.
+        transitions:
+          search:
+            target: recalling
+            actor: agent
+            executor: { capability: intentos.search_intent_harness }
+          record:
+            title: Persist the recall outcome (recalled_intent + intent_known)
+            target: recalling
+            actor: agent
+            inputSchema:
+              type: object
+              required: [recalled_intent, intent_known]
+              properties:
+                recalled_intent: { type: array }
+                intent_known: { type: boolean }
+            executor: { kind: noop }
+            output:
+              recalled_intent: "$.arguments.recalled_intent"
+              intent_known: "$.arguments.intent_known"
+          advance:
+            title: Recall complete — route on intent_known
+            target: intent_gate
+            actor: agent
+            executor: { kind: noop }
+
+      intent_gate:
+        transitions:
+          reuse:
+            target: vetting
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.intent_known == true" } ]
+          elicit:
+            target: eliciting
+            actor: deterministic
+            guards: [ { kind: expr, expr: "$.context.intent_known == false" } ]
+
+      # ── (a) PERSISTENCE, ask side: rich-context human elicitation ────────
+      eliciting:
+        goal: >
+          HUMAN GATE — user-intent elicitation (asked ONCE, then persisted).
+          WHAT IS BEING ASKED: describe the primary user of the surface being
+          optimized — a persona id (short slug, e.g. "cost-conscious-dev"),
+          their mental model (how they believe the surface works, in their own
+          terms), their JTBD spine (the ordered jobs-to-be-done steps this
+          surface serves, one per line), any ancillary journeys (secondary
+          flows, one per line, may be empty), and the key states/screens the
+          user moves through (one per line). WHY: this premium flow persists
+          your answers into IntentOS as durable product_job / journey / state
+          entities via the propose-and-park tail, so every later optimization
+          run — including the commodity cognitive-science tier, which anchors
+          each principle lens on this persona — recalls them instead of
+          re-asking; your one answer becomes the reusable ground truth the UX
+          findings are grounded against. WHAT HAPPENS NEXT: the proposals are
+          grounded in existing spec entities and either apply directly or park
+          as approval tickets for human sign-off in IntentOS's own dialog —
+          nothing is self-approved here. YOUR CHOICES: fill in all fields
+          (ancillary journeys may be blank); if you cannot answer now, give
+          your best partial answer — a thin persona still beats an unanchored
+          analysis and can be refined in IntentOS later.
+        transitions:
+          provide_intent:
+            title: >
+              Provide the persona/JTBD/mental-model context for this surface
+              (persisted into IntentOS; asked once, reused across runs)
+            target: persisting
+            actor: human
+            inputSchema:
+              type: object
+              required: [persona_id, mental_model, jtbd_spine]
+              properties:
+                persona_id:
+                  type: string
+                  description: >
+                    Short persona slug naming the primary user of this
+                    surface (e.g. "cost-conscious-dev").
+                mental_model:
+                  type: string
+                  description: >
+                    How this user believes the surface works, in their own
+                    terms — the model the UI must not violate.
+                jtbd_spine:
+                  type: string
+                  description: >
+                    The ordered jobs-to-be-done steps this surface serves,
+                    one step per line (top = first).
+                ancillary_journeys:
+                  type: string
+                  description: >
+                    Secondary flows worth preserving, one per line. May be
+                    left empty.
+                key_states:
+                  type: string
+                  description: >
+                    The key states/screens the user moves through on this
+                    surface, one per line.
+            executor: { kind: noop }
+            output:
+              persona_id: "$.arguments.persona_id"
+              persona_mental_model: "$.arguments.mental_model"
+              persona_jtbd_spine: "$.arguments.jtbd_spine"
+              persona_ancillary_journeys: "$.arguments.ancillary_journeys"
+              persona_key_states: "$.arguments.key_states"
+
+      # ── (a) PERSISTENCE, write side: propose the intent into IntentOS ────
+      persisting:
+        goal: >
+          Shape the elicited primitives (persona_id / persona_mental_model /
+          persona_jtbd_spine / persona_ancillary_journeys / persona_key_states
+          in context) into `source_findings`-shaped elements for the tail —
+          one element per entity to persist: a product_job element per JTBD
+          spine step, a journey element per journey (primary + each ancillary),
+          and a state element per key state. Each element is `{ target_hint,
+          detail }`: `target_hint` is what the tail's `grounding.search` feeds
+          to `search_intent_harness` (name the product area / parent job so it
+          grounds in real existing entities); `detail` carries the entity type
+          to add, the proposed content, and the persona's mental model as
+          rationale context. Record the list via `record`, then `persist` — it
+          hands the WHOLE list to the reusable tail in ONE dispatch (the tail
+          iterates internally, grounds each element, proposes it, and records
+          applied vs parked; it never self-approves).
+        transitions:
+          record:
+            title: Persist the shaped intent entities as intent_findings
+            target: persisting
+            actor: agent
+            inputSchema:
+              type: object
+              required: [intent_findings]
+              properties:
+                intent_findings: { type: array }
+            executor: { kind: noop }
+            output:
+              intent_findings: "$.arguments.intent_findings"
+          persist:
+            title: Dispatch the elicited intent to flow.intent.propose_and_park
+            target: vetting
+            actor: agent
+            executor:
+              kind: workflow
+              definitionId: flow.intent.propose_and_park
+              use:
+                inputs:
+                  source_findings: "$.context.intent_findings"
+                  rationale: "persist elicited persona/JTBD/mental-model as durable product_job/journey/state intent (premium UX optimization, asked once, reused across runs)"
+                outputs:
+                  "$.context.intent_applied": applied
+                  "$.context.intent_parked_tickets": parked_tickets
+                  "$.context.intent_grounded_refs": grounded_refs
+
+      # ── VET + FIX: reuse the shipped uxos vet-and-fix flow ───────────────
+      vetting:
+        goal: >
+          Vet the captured surface and fix it through IntentOS by dispatching
+          the shipped `flow.ux.vet-and-fix` (uxos extract → audit →
+          budget-capped hand-off to the propose tail) in ONE `vet` dispatch.
+          Its applied / parked / grounded / residual outputs are projected
+          back here as ux_*.
+        transitions:
+          vet:
+            title: Dispatch the capture to flow.ux.vet-and-fix
+            target: intake
+            actor: agent
+            executor:
+              kind: workflow
+              definitionId: flow.ux.vet-and-fix
+              use:
+                inputs:
+                  capture_html: "$.context.capture_html"
+                  budget: "$.context.budget"
+                outputs:
+                  "$.context.ux_applied": applied
+                  "$.context.ux_parked_tickets": parked_tickets
+                  "$.context.ux_grounded_refs": grounded_refs
+                  "$.context.ux_residual_findings": residual_findings
+
+      # ── (c) COMPOSITION: commodity findings arrive as INPUT ──────────────
+      intake:
+        goal: >
+          Compose with the commodity cognitive-science tier. Read
+          `$.context.commodity_findings` — the VERIFIED findings log produced
+          by cognitive-architectures[-max] `flow.ux.optimize` (per-principle
+          skills + falsification; NOT re-derived here). If it is empty, `skip`.
+          Otherwise re-shape each finding into a `{ target_hint, detail }`
+          element — `target_hint` from its surface + jtbd_step (so grounding
+          lands on the persisted/recalled persona intent: prefer the real ids
+          in `recalled_intent` / `intent_grounded_refs`), `detail` from its
+          mechanism, evidence, user_cost, suggested_fix and severity_hint —
+          `record` the list as `commodity_proposals`, then `dispatch` hands it
+          to the reusable tail in ONE dispatch. Outcomes are recorded as
+          commodity_* — applied or parked, never self-approved.
+        transitions:
+          record:
+            title: Persist the re-shaped commodity findings as commodity_proposals
+            target: intake
+            actor: agent
+            inputSchema:
+              type: object
+              required: [commodity_proposals]
+              properties:
+                commodity_proposals: { type: array }
+            executor: { kind: noop }
+            output:
+              commodity_proposals: "$.arguments.commodity_proposals"
+          dispatch:
+            title: Dispatch the commodity findings to flow.intent.propose_and_park
+            target: conforming
+            actor: agent
+            executor:
+              kind: workflow
+              definitionId: flow.intent.propose_and_park
+              use:
+                inputs:
+                  source_findings: "$.context.commodity_proposals"
+                  rationale: "commodity cognitive-science UX findings (surface x principle matrix, falsified) composed into IntentOS via the premium tier"
+                outputs:
+                  "$.context.commodity_applied": applied
+                  "$.context.commodity_parked_tickets": parked_tickets
+                  "$.context.commodity_grounded_refs": grounded_refs
+          skip:
+            title: No commodity findings supplied — skip composition
+            target: conforming
+            actor: agent
+            executor: { kind: noop }
+
+      # ── (b) uxos CONFORMANCE verification stage (+ structural check) ─────
+      conforming:
+        goal: >
+          Additional verification stage — all read-only. Call `extract` with
+          `{ html: $.context.capture_html }` to lift the UX-IR, then `conform`
+          on it: every quality-rule verdict tagged deterministic vs advisory,
+          plus the uncovered-dimension enumeration (a clean run cannot hide a
+          blind spot). If intent↔ux mapping cells are available, call
+          `coverage` (uxos.check_coverage) to compute stale / orphan /
+          uncovered drift against the persisted intent. Optionally refresh the
+          structural model with `scan` then `diagnostics`
+          (structureos.get_diagnostics) to check the fix surface for
+          structural regressions. Roll the verdicts up (verdict counts by
+          epistemic class, uncovered dimensions, drift findings, structural
+          notes) and `record` them as `conformance_summary` — report verdicts
+          verbatim, never fabricate a number. Then `advance`.
+        transitions:
+          extract:
+            target: conforming
+            actor: agent
+            executor: { capability: uxos.extract }
+          conform:
+            target: conforming
+            actor: agent
+            executor: { capability: uxos.conform }
+          coverage:
+            target: conforming
+            actor: agent
+            executor: { capability: uxos.check_coverage }
+          scan:
+            target: conforming
+            actor: agent
+            executor: { capability: structureos.scan_repo }
+          diagnostics:
+            target: conforming
+            actor: agent
+            executor: { capability: structureos.get_diagnostics }
+          record:
+            title: Persist the conformance/structural rollup
+            target: conforming
+            actor: agent
+            inputSchema:
+              type: object
+              required: [conformance_summary]
+              properties:
+                conformance_summary: { type: object }
+            executor: { kind: noop }
+            output:
+              conformance_summary: "$.arguments.conformance_summary"
+          advance:
+            title: Verification complete
+            target: reporting
+            actor: agent
+            executor: { kind: noop }
+
+      reporting:
+        goal: >
+          Emit the premium optimization report: the intent provenance
+          (`recalled_intent` reused, or the elicited persona persisted —
+          `intent_applied` / `intent_parked_tickets` / `intent_grounded_refs`),
+          the vet-and-fix outcomes (`ux_applied` / `ux_parked_tickets` /
+          `ux_grounded_refs` / `ux_residual_findings`), the commodity
+          composition outcomes (`commodity_applied` /
+          `commodity_parked_tickets` / `commodity_grounded_refs`, or "skipped"
+          when no commodity findings were supplied), and the
+          `conformance_summary`. Parked tickets are hand-offs awaiting human
+          approval in IntentOS's own dialog — report them as such, never as
+          failures. Then finish.
+        transitions:
+          finish:
+            target: done
+            actor: agent
+            executor: { kind: noop }
+
+      done:
+        terminal: true
