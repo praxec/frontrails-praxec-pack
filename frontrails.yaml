@@ -14,6 +14,15 @@
 # was the v1.2.0 bug. `map:` resolves recursively, so a nested `params: { … }`
 # object mixing literals and `$.` paths is the correct shape.
 #
+# OPTIONAL params (v1.3.1): a bare `$.arguments.params` binding HARD-FAILS
+# (MCP_MAP_BINDING_UNRESOLVED) when the caller omits `params`. Where `params` is
+# OPTIONAL (not in the action's `inputSchema.required`) the binding is wrapped
+# `{ "$optional": "$.arguments.params" }`, which OMITS the key when the value is
+# absent instead of failing — so a proxy session can start without pre-supplying
+# args to every read verb. Required actions (propose / simulate_and_project /
+# structureos.move; and the uxos verbs' `ir`) keep the bare binding, so a missing
+# required arg still fails loud. praxec `check` enforces this split (V29-optional).
+#
 # ASYNC-HITL (FrontRails 0.0.17): mutating IntentOS actions are human-gated.
 # When a mutation cannot reach a human — as in this headless/agent context —
 # `propose`, `review_strategy` and `request_full_review` no longer wedge or
@@ -24,7 +33,7 @@
 # the ticket with `intentos.propose_status { ticket_id }`; a burn-down loop
 # should surface the ticket_id and move on to other worklist items rather than
 # block. See the `intentos.propose_status` capability and the workflow goals.
-version: "1.3.0"
+version: "1.3.1"
 
 connections:
   intentos:
@@ -43,12 +52,13 @@ connections:
     env:
       STRUCTUREOS_WORKSPACE_ROOT: "."
 
-  # SecurityOS MCP server. OPEN ITEM: binary name `securityos` and the
-  # `mcp serve` subcommand are UNCONFIRMED (not on PATH at authoring time).
+  # SecurityOS MCP server. CONFIRMED 2026-07-27: the installed binary is
+  # `securityos-mcp` (stdio, no subcommand) — same shape as structureos-mcp /
+  # uxos-mcp. The earlier `securityos` + `mcp serve` guess was wrong (that name
+  # is not on PATH); corrected to the real binary.
   securityos:
     kind: mcp
-    command: "securityos"
-    args: ["mcp", "serve"]
+    command: "securityos-mcp"
     env:
       SECURITYOS_WORKSPACE_ROOT: "."
 
@@ -90,7 +100,7 @@ capabilities:
       tool: "intentos"
       map:
         action: "search_intent_harness"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   intentos.propose:
     title: "IntentOS — propose grounded spec changes"
@@ -123,7 +133,7 @@ capabilities:
       tool: "intentos"
       map:
         action: "navigate"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   intentos.finish:
     title: "IntentOS — capture impact + feedback, surface remaining work"
@@ -139,7 +149,7 @@ capabilities:
       tool: "intentos"
       map:
         action: "finish"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   intentos.simulate_and_project:
     title: "IntentOS — run Preveti/Simuli and project into the compass"
@@ -180,7 +190,7 @@ capabilities:
       tool: "intentos"
       map:
         action: "worklist"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   intentos.certify:
     title: "IntentOS — certify (apex gate: attested + no conflicts)"
@@ -200,7 +210,7 @@ capabilities:
       tool: "intentos"
       map:
         action: "certify"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   intentos.propose_status:
     title: "IntentOS — poll an async approval ticket (park → apply status)"
@@ -227,7 +237,7 @@ capabilities:
       tool: "intentos"
       map:
         action: "propose_status"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   # --- StructureOS (code structure) ---
   # OPEN ITEM: action names below are best-effort from the StructureOS
@@ -247,7 +257,7 @@ capabilities:
       tool: "structureos"
       map:
         action: "scan_repo"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   structureos.get_diagnostics:
     title: "StructureOS — structural diagnostics"
@@ -263,7 +273,7 @@ capabilities:
       tool: "structureos"
       map:
         action: "get_diagnostics"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   structureos.move:
     title: "StructureOS — move entities with auto-wiring"
@@ -299,7 +309,7 @@ capabilities:
       tool: "securityos"
       map:
         action: "scan"
-        params: "$.arguments.params"
+        params: { "$optional": "$.arguments.params" }
 
   # --- uxos (UX conformance) ---
   # CONFORMANCE verbs, not intentos clones: intentos AUTHORS intent, uxos
@@ -325,8 +335,8 @@ capabilities:
       map:
         action: "extract"
         params:
-          html: "$.arguments.html"
-          a11y_tree: "$.arguments.a11y_tree"
+          html: { "$optional": "$.arguments.html" }
+          a11y_tree: { "$optional": "$.arguments.a11y_tree" }
 
   uxos.conform:
     title: "uxos — run all quality rules (verdicts with epistemic class + dimension)"
@@ -418,8 +428,8 @@ capabilities:
         action: "check_coverage"
         params:
           ir: "$.arguments.ir"
-          cells: "$.arguments.cells"
-          require_covered_kinds: "$.arguments.require_covered_kinds"
+          cells: { "$optional": "$.arguments.cells" }
+          require_covered_kinds: { "$optional": "$.arguments.require_covered_kinds" }
 
   uxos.compare:
     title: "uxos — structural diff of two captures (regression surface)"
