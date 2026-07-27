@@ -43,12 +43,13 @@ connections:
     env:
       STRUCTUREOS_WORKSPACE_ROOT: "."
 
-  # SecurityOS MCP server. OPEN ITEM: binary name `securityos` and the
-  # `mcp serve` subcommand are UNCONFIRMED (not on PATH at authoring time).
+  # SecurityOS MCP server. CONFIRMED 2026-07-27: the installed binary is
+  # `securityos-mcp` (stdio, no subcommand) — same shape as structureos-mcp /
+  # uxos-mcp. The earlier `securityos` + `mcp serve` guess was wrong (that name
+  # is not on PATH); corrected to the real binary.
   securityos:
     kind: mcp
-    command: "securityos"
-    args: ["mcp", "serve"]
+    command: "securityos-mcp"
     env:
       SECURITYOS_WORKSPACE_ROOT: "."
 
