@@ -1,0 +1,42 @@
+name: praxec check
+
+# Validates that this pack's definitions load cleanly under a pinned praxec
+# engine. `praxec check` exits non-zero on any validation error — a bad tier id,
+# an unresolved `use.inputs` path, a missing state, a fabricated connection — so
+# a definition defect fails the PR instead of surfacing at runtime.
+#
+# The engine is built from source at a PINNED tag (no release binaries are
+# published) and cached per tag, so only the first run on a new tag pays the
+# build cost. Bump PRAXEC_VERSION when the pack targets a newer engine.
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+env:
+  PRAXEC_VERSION: v0.0.40
+  CHECK_CONFIG: examples/praxec-frontrails-only.yaml
+
+jobs:
+  check:
+    name: praxec check (pack loads clean)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache praxec binary (per engine tag)
+        id: cache-praxec
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/praxec
+          key: praxec-bin-${{ env.PRAXEC_VERSION }}-${{ runner.os }}
+
+      - name: Install praxec (build from source at pinned tag)
+        if: steps.cache-praxec.outputs.cache-hit != 'true'
+        run: cargo install --git https://github.com/praxec/praxec --tag ${{ env.PRAXEC_VERSION }} --locked praxec
+
+      - name: praxec check
+        run: praxec check --config "$CHECK_CONFIG"

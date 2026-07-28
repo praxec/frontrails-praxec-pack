@@ -1,0 +1,42 @@
+# examples/praxec-frontrails-only.yaml
+#
+# Minimal gateway config that loads the FrontRails pack's own workflow
+# layers only (no cross-pack cognitive-architectures dependencies). Used
+# by CI (.github/workflows/praxec-check.yml) to guard that every
+# definition in this pack loads cleanly under a pinned praxec engine.
+#
+# Usage:
+#   praxec check --config examples/praxec-frontrails-only.yaml
+#
+# This composes the pack's self-contained layers via `include:` (the same
+# files scripts/check.sh validates), rather than a bare `repos: - path: ..`
+# scan — the pack ships several stand-alone `*-check.yaml` harnesses and
+# example specs under examples/ that are not all meant to co-load. The
+# layers below are the shipped, mutually-consistent production surface:
+# base capabilities + coordination + strategy + both UX tiers.
+#
+# `_writableRepos` (praxec 0.0.21+) declares the repo(s) a run may operate
+# on. Every run's ambient `$.run.repo_root` is sourced from here — a run
+# cannot start without at least one, and the flows resolve `$.run.repo_root`
+# (no hand-threaded `repo_path`) against it. Point `root` at the repo you
+# are operating ON; with a single entry it is selected automatically.
+
+version: "1.0.0"
+
+praxec:
+  _writableRepos:
+    - root: "."          # the repo this run operates on (adjust to your target)
+      push: false
+
+include:
+  - ../frontrails.yaml
+  - ../frontrails-coordination.yaml
+  - ../frontrails-strategy.yaml
+  - ../frontrails-ux.yaml
+  - ../frontrails-ux-premium.yaml
+
+store:
+  kind: memory          # dev/testing: in-memory governance state
+
+audit:
+  sink: stderr          # dev/testing: human-readable audit to stderr
